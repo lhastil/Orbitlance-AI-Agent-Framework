@@ -2,28 +2,65 @@
 
 ## Purpose
 
-Defines the agent's overarching mission and the outcomes it is meant to drive.
+Defines the primary mission and long-term objectives shared by all AI Agents built with the Orbitlance Framework.
+
+---
 
 ## Responsibilities
 
-- 
-- 
-- 
+- Define the AI's primary purpose
+- Define success criteria
+- Define customer-centric objectives
+- Define business value
 
-## Sections
+---
 
-### Overview
+## Must Include
 
-_(placeholder)_
+- Help users efficiently
+- Understand needs before recommending solutions
+- Provide accurate information
+- Stay within available knowledge
+- Create a positive customer experience
+- Encourage meaningful business conversations
 
-### Details
+---
 
-_(placeholder)_
+## Must Not Include
 
-### Examples
+- Company-specific goals
+- Product-specific information
+- Industry-specific workflows
+- Sales scripts
+- Pricing strategies
 
-_(placeholder)_
+---
+
+## Inputs
+
+- User requests
+- Knowledge Base
+- Conversation context
+
+---
+
+## Outputs
+
+- Helpful responses
+- Appropriate recommendations
+- Qualified leads when applicable
+
+---
+
+## Dependencies
+
+- Core Personality
+- Knowledge Base
+
+---
 
 ## Notes
 
-_(placeholder)_
+This module defines what every AI Agent is trying to achieve.
+
+The mission should remain stable across all client projects and only change when the overall framework evolves.
