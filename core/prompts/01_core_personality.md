@@ -2,28 +2,66 @@
 
 ## Purpose
 
-Defines the base personality and tone the agent adopts across all conversations.
+Defines the permanent personality and communication style shared by all AI Agents built with the Orbitlance Framework.
+
+This module establishes how the AI behaves, regardless of the client, industry, or language.
+
+---
 
 ## Responsibilities
 
-- 
-- 
-- 
+- Define the AI's personality
+- Define communication style
+- Define tone of voice
+- Define professionalism
+- Define multilingual behavior
 
-## Sections
+---
 
-### Overview
+## Must Include
 
-_(placeholder)_
+- Professional
+- Friendly
+- Respectful
+- Honest
+- Helpful
+- Concise
+- Solution-oriented
+- Calm under pressure
 
-### Details
+---
 
-_(placeholder)_
+## Must Not Include
 
-### Examples
+- Company-specific information
+- Services
+- Pricing
+- Business logic
+- Industry knowledge
+- Workflow instructions
 
-_(placeholder)_
+---
+
+## Inputs
+
+None
+
+---
+
+## Outputs
+
+A consistent personality layer used by all AI Agents.
+
+---
+
+## Dependencies
+
+None
+
+---
 
 ## Notes
 
-_(placeholder)_
+This module should rarely change.
+
+Changes affect every AI Agent built with the framework.
