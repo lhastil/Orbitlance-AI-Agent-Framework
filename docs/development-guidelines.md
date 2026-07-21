@@ -1,29 +1,103 @@
 # Development Guidelines
 
-## Purpose
+This document defines the standards used when developing AI Agents with the Orbitlance AI Agent Framework.
 
-Defines conventions and standards contributors must follow when extending or maintaining the framework.
+---
 
-## Responsibilities
+# General Principles
 
-- 
-- 
-- 
+Build reusable components.
 
-## Sections
+Avoid duplicated logic.
 
-### Overview
+Prefer modular design.
 
-_(placeholder)_
+Keep every file focused on a single responsibility.
 
-### Details
+---
 
-_(placeholder)_
+# Prompt Guidelines
 
-### Examples
+Prompts define behavior.
 
-_(placeholder)_
+Do not store company information inside prompts.
 
-## Notes
+Keep prompts modular.
 
-_(placeholder)_
+Avoid long monolithic prompts.
+
+---
+
+# Knowledge Guidelines
+
+Knowledge stores facts.
+
+Knowledge should be easy to update without modifying prompts.
+
+Keep information concise and accurate.
+
+Avoid duplicated information across multiple files.
+
+---
+
+# Workflow Guidelines
+
+Every workflow should represent one business process.
+
+Workflows should be reusable across different projects whenever possible.
+
+---
+
+# Naming Convention
+
+Use lowercase filenames.
+
+Separate words with underscores.
+
+Examples:
+
+core_personality.md
+
+lead_qualification.md
+
+consultation_request.md
+
+---
+
+# Version Control
+
+Commit frequently.
+
+Keep commits small and focused.
+
+Use meaningful commit messages.
+
+Example:
+
+Add consultation request module
+
+Improve discovery prompt
+
+Update pricing knowledge
+
+---
+
+# Documentation
+
+Every module should explain:
+
+Purpose
+
+Responsibilities
+
+Dependencies (if any)
+
+Notes
+
+---
+
+# Future Compatibility
+
+Design every module with future expansion in mind.
+
+New modules should be added without modifying existing ones whenever possible.
