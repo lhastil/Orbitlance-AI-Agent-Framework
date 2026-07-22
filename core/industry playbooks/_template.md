@@ -1,94 +1,139 @@
-# [Industry Name] Industry Playbook
+# Industry Playbook
 
 ## Purpose
 
-Industry-specific guidance layered on top of the base agent for engaging prospects in the [industry name] sector.
+Defines the business knowledge, customer journey, common workflows, and AI opportunities for a specific industry.
 
-This file is a template. Copy it to create a new industry playbook and replace the placeholders below.
+This playbook enables AI Agents to communicate naturally with businesses in this industry and recommend solutions based on real operational needs.
 
 ---
 
 ## Responsibilities
 
-- Adapt the base agent's conversation to this industry's context
-- Highlight the services most relevant to this industry
-- Reflect the terminology and concerns specific to this industry
-- Surface industry-specific objections and how to address them
+- Understand the industry
+- Identify common business challenges
+- Explain industry workflows
+- Recognize automation opportunities
+- Support industry-specific recommendations
 
 ---
 
-## Must Include
+## Industry Overview
 
-- Industry overview
-- Common pain points
-- Relevant services
-- Industry-specific terminology
-- Typical objections and responses
-- Relevant portfolio examples (if any)
+### Industry Description
 
----
+### Typical Business Size
 
-## Must Not Include
+### Target Customers
 
-- Company-wide information already defined in Company Knowledge
-- Pricing details already defined in Pricing Knowledge
-- Duplicate service descriptions already defined in Services Knowledge
+### Common Business Goals
 
 ---
 
-## Sections
+## Business Challenges
 
-### Industry Overview
+### Challenge 1
 
-_(placeholder)_
+### Challenge 2
 
-### Common Pain Points
+### Challenge 3
 
-_(placeholder)_
-
-### Relevant Services
-
-_(placeholder)_
-
-### Industry Terminology
-
-_(placeholder)_
-
-### Common Objections
-
-_(placeholder)_
-
-### Relevant Portfolio Examples
-
-_(placeholder)_
+...
 
 ---
 
-## Inputs
+## Daily Operations
 
-- Company Knowledge
-- Services
-- Portfolio
+Describe how businesses in this industry typically operate.
 
 ---
 
-## Outputs
+## Customer Journey
 
-Industry-adapted context that layers on top of the base agent for a specific vertical.
+Step 1
+
+Step 2
+
+Step 3
+
+...
 
 ---
 
-## Dependencies
+## Common Customer Questions
 
-- Company
-- Services
-- Discovery Engine
-- Recommendation Engine
+-
+
+-
+
+-
+
+---
+
+## AI Opportunities
+
+Potential areas where AI can create value.
+
+---
+
+## Recommended Orbitlance Services
+
+-
+
+-
+
+-
+
+---
+
+## Recommended Automations
+
+-
+
+-
+
+-
+
+---
+
+## Suggested AI Agents
+
+-
+
+-
+
+-
+
+---
+
+## Industry Terminology
+
+Term
+
+Definition
+
+---
+
+## KPIs
+
+Typical success metrics for this industry.
+
+---
+
+## Common Integrations
+
+CRM
+
+Booking System
+
+ERP
+
+Payment Gateway
+
+etc.
 
 ---
 
 ## Notes
 
-Every industry playbook should follow this same structure to keep playbooks consistent and easy to compare.
-
-This template itself should never be filled in directly — duplicate it into a new file named after the industry instead.
+Industry-specific considerations, regulations, or operational details.
