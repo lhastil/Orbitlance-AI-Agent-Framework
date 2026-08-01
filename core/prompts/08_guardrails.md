@@ -1,81 +1,46 @@
-# Guardrails
+# Guardrails (Prompt Injection Point)
 
 ## Purpose
 
-Defines the operational boundaries and safety rules that every AI Agent built with the Orbitlance Framework must follow.
+Marks where the rules defined in `core/guardrails/` (Safety, Escalation, Compliance) are injected into the assembled system prompt.
 
-The objective is to ensure safe, reliable, and trustworthy interactions while protecting both users and the business.
+This file intentionally contains no guardrail rules of its own. `core/guardrails/` is the single source of truth for safety, escalation, and compliance behavior — duplicating those rules here would create two independently-editable copies of the same policy that could silently drift apart.
 
 ---
 
 ## Responsibilities
 
-- Define behavioral boundaries
-- Prevent misinformation
-- Ensure honest communication
-- Protect user trust
-- Maintain professional conduct
+- Reference `core/guardrails/safety.md`, `core/guardrails/escalation.md`, and `core/guardrails/compliance.md` as the content to inject at this point in the prompt
+- Preserve the prompt-assembly order (Core Personality → Mission → Conversation Rules → **Guardrails** → Fallback Responses → Tool Instructions)
+- Ensure guardrail content is never paraphrased or restated elsewhere in the prompt stack
 
 ---
 
 ## Must Include
 
-- Stay within the available Knowledge Base
-- Clearly acknowledge uncertainty when information is unavailable
-- Never fabricate facts or capabilities
-- Maintain honesty and transparency
-- Respect user privacy
-- Encourage human assistance when appropriate
-- Remain professional in all situations
+- A reference to all three files in `core/guardrails/`
+- Nothing else — no restated rules, no paraphrased safety principles
 
 ---
 
 ## Must Not Include
 
-- Invent information
-- Guess answers
-- Make business commitments
-- Promise unavailable features or services
-- Share confidential information
-- Ignore safety or company policies
-
----
-
-## Safety Principles
-
-The AI should:
-
-- Be truthful
-- Be transparent
-- Be respectful
-- Protect user trust
-- Prioritize accuracy over confidence
-
----
-
-## Boundary Handling
-
-When the AI cannot confidently answer a request, it should:
-
-- Explain the limitation
-- Offer the closest helpful alternative
-- Escalate to a human when appropriate
+- Any safety, escalation, or compliance rule not already defined in `core/guardrails/`
+- A second copy of guardrail content "for convenience" — edit `core/guardrails/` instead
 
 ---
 
 ## Inputs
 
-- User messages
-- Conversation context
-- Knowledge Base
+- `core/guardrails/safety.md`
+- `core/guardrails/escalation.md`
+- `core/guardrails/compliance.md`
 
 ---
 
 ## Outputs
 
-- Safe responses
-- Trustworthy communication
-- Appropriate escalation when necessary
+The assembled guardrail section of the system prompt, sourced entirely from `core/guardrails/`.
 
 ---
 
@@ -83,24 +48,20 @@ When the AI cannot confidently answer a request, it should:
 
 - Core Personality
 - Conversation Rules
-- Knowledge Base
+- Safety Guardrails (`core/guardrails/safety.md`)
+- Escalation Guardrails (`core/guardrails/escalation.md`)
+- Compliance Guardrails (`core/guardrails/compliance.md`)
 - Fallback Responses
 
 ---
 
 ## Success Criteria
 
-The AI should never:
-
-- Mislead users
-- Overstate its capabilities
-- Violate business policies
-- Respond outside its defined scope
+- Guardrail behavior in the assembled prompt matches `core/guardrails/` exactly, with no divergence.
+- Updating a rule in `core/guardrails/` is sufficient to update every agent's behavior — no second file needs to be edited.
 
 ---
 
 ## Notes
 
-Guardrails define what the AI is allowed to do—not how it should solve business problems.
-
-They are permanent framework rules and should remain consistent across all client projects.
+If you find yourself wanting to add a new safety, escalation, or compliance rule, add it to the appropriate file in `core/guardrails/`, not here.

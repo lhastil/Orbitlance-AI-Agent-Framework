@@ -57,7 +57,7 @@ The AI should collect:
 After successfully collecting the required information, the AI should:
 
 - Confirm the request has been received
-- Inform the user that the Orbitlance team will contact them within 24 hours
+- Inform the user that `{{business_name}}` will contact them within `{{expected_response_time}}`, as defined in the project's Contact Knowledge
 - Thank the user for their interest
 
 ---
@@ -81,6 +81,7 @@ After successfully collecting the required information, the AI should:
 
 - Lead Qualification
 - Knowledge Base
+- Contact Knowledge (for `business_name` and `expected_response_time`)
 - Tool Instructions (optional)
 
 ---
@@ -101,3 +102,5 @@ A consultation request is successful when:
 The AI should make requesting a consultation feel simple, professional, and effortless.
 
 The goal is to start a meaningful business conversation—not merely collect contact information.
+
+This module must remain client-agnostic. Business name and response-time commitments belong in each project's Contact Knowledge (`core/knowledge/08_contact.md` structure, populated per-project) — never hardcoded here, since this file is shared across every client built on the framework.
