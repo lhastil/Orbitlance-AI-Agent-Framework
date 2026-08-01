@@ -1,6 +1,6 @@
 # Technologies — Sunrise Dental Clinic
 
-Each entry follows the Technology Template embedded in `core/knowledge/05_technologies.md` (no dedicated `core/templates/technologies.md` currently exists — see Notes below).
+Each entry follows the structure defined in `core/templates/technologies.md`.
 
 ---
 
@@ -62,6 +62,6 @@ Each entry follows the Technology Template embedded in `core/knowledge/05_techno
 
 ## Notes
 
-This file was populated using the Technology Template embedded directly in `core/knowledge/05_technologies.md`, since `core/templates/` currently has no dedicated `technologies.md` file — every other knowledge file has a matching template, but this one doesn't. Worth adding `core/templates/technologies.md` to close that gap for future projects.
+This file was populated from `core/templates/technologies.md` as part of onboarding the Sunrise Dental Clinic project.
 
 All content above is fictional, created for framework demonstration purposes.
