@@ -8,6 +8,8 @@ This playbook enables AI Agents to understand [industry name] operations, commun
 
 This file is a template. Copy it to create a new industry playbook, replace the placeholders, and follow the same section order as the existing playbooks so all industry playbooks stay structurally consistent.
 
+**This playbook is reference-only.** It is never copied into a project's Knowledge automatically. It exists to guide the human writing a specific project's Knowledge — informing what to consider, not content to paste in verbatim.
+
 ---
 
 ## Responsibilities

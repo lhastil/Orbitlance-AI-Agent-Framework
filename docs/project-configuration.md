@@ -49,7 +49,11 @@ Overrides: nothing on its own — this is the **index** that tells the framework
 - Which knowledge set is active
 - Any feature flags or workflow toggles (e.g., is Voice Agent enabled for this client?)
 
-Selecting an industry playbook is not the same as overriding it — the project points at the shared playbook; it does not fork or copy its content. If a client's needs genuinely diverge from the shared playbook, that divergence belongs in the client's own Knowledge (extension point 1), not in a client-specific copy of the playbook.
+**An Industry Playbook is reference-only.** Selecting one in Config is not the same as overriding it — the project points at the shared playbook; it does not fork or copy its content.
+
+- A playbook is never copied into a project's Knowledge automatically. There is no mechanism, script, or process that does this, and none should ever be built.
+- A playbook exists to **guide the human** who is writing that project's Knowledge (extension point 1) — it's reference material for what to consider (common challenges, typical services, terminology, KPIs), not source content to paste in.
+- If a client's needs diverge from the shared playbook, that divergence belongs entirely in the client's own Knowledge — never in a client-specific copy of the playbook.
 
 ---
 
@@ -61,7 +65,7 @@ Everything else in `core/` is shared, fixed, and identical across every client. 
 - `core/guardrails/` — safety, escalation, and compliance rules
 - `core/workflows/` — the step-by-step process logic
 - `core/tools/` — the vendor-agnostic tool contracts themselves (as opposed to the per-project configuration that fulfills them)
-- `core/templates/` — these are meta-documents (how to fill in Knowledge), not runtime content a project consumes directly
+- `core/templates/` — these are meta-documents (how to fill in Knowledge, Branding, Integrations, and Config), not runtime content a project consumes directly
 - `core/industry playbooks/` — shared per-industry knowledge, selected via Config, never forked per client
 
 If a real client need doesn't fit anywhere above, that is a signal the framework itself needs a new module — not that this rule should be bent for one client (Rule 5).

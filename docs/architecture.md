@@ -91,6 +91,16 @@ A Template is always a **strict superset** of its matching Knowledge contract:
 
 Knowledge and Templates are not two independent descriptions of the same thing — Knowledge is the rulebook, Templates are the worksheet built from it.
 
+`core/templates/` also includes a template for each of the other three extension points — `branding.md`, `integrations.md`, and `config.md` — so that Branding, Integrations, and Config stay just as structurally consistent across projects as Knowledge does. These three don't have a matching `core/knowledge/` contract file the way the 8 knowledge templates do; they exist to standardize the *shape* of those extension points directly.
+
+---
+
+## Industry Playbooks
+
+Shared, per-industry reference material (`core/industry playbooks/`) covering common challenges, typical services, terminology, and KPIs for a given industry.
+
+**A playbook is reference-only.** It is never copied into a project's Knowledge automatically — there is no mechanism that does this. A playbook exists to guide the *human* writing a project's Knowledge, informing what to consider; it is not source content to paste in. See `docs/project-configuration.md` for the full rule.
+
 ---
 
 ## Workflows
