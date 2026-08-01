@@ -35,7 +35,7 @@ Any treatment requiring an in-person exam or imaging (implants, veneers, root ca
 
 ### Teeth Whitening
 
-- **Starting Price:** $350
+- **Starting Price:** 
 - **Billing Cycle:** One-Time
 
 ### Veneers
