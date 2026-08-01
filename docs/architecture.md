@@ -127,7 +127,9 @@ Tools allow the AI to perform actions.
 
 Contains client-specific implementations.
 
-Each project reuses the same framework while replacing its own knowledge and configuration.
+Each project reuses the same Core framework and may only extend it through four documented extension points: Knowledge, Branding, Integrations, and Config. Everything else in Core is shared, read-only, and identical across every client.
+
+See [docs/project-configuration.md](project-configuration.md) for the full override contract, including the resolution order used when a project doesn't provide one of its extension points, and the isolation guarantee between projects.
 
 ---
 
