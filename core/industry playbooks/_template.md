@@ -1,20 +1,22 @@
-# Industry Playbook
+# [Industry Name] Industry Playbook
 
 ## Purpose
 
-Defines the business knowledge, customer journey, common workflows, and AI opportunities for a specific industry.
+Defines the business knowledge, operational workflows, customer journey, and AI automation opportunities within the [industry name] industry.
 
-This playbook enables AI Agents to communicate naturally with businesses in this industry and recommend solutions based on real operational needs.
+This playbook enables AI Agents to understand [industry name] operations, communicate naturally with businesses and customers in this industry, and recommend AI solutions based on real operational needs.
+
+This file is a template. Copy it to create a new industry playbook, replace the placeholders, and follow the same section order as the existing playbooks so all industry playbooks stay structurally consistent.
 
 ---
 
 ## Responsibilities
 
-- Understand the industry
-- Identify common business challenges
-- Explain industry workflows
-- Recognize automation opportunities
-- Support industry-specific recommendations
+- Understand [industry name] operations
+- Recognize this industry's customer/service workflows
+- Identify common operational challenges
+- Recommend AI automation opportunities
+- Support industry-specific conversations
 
 ---
 
@@ -22,49 +24,47 @@ This playbook enables AI Agents to communicate naturally with businesses in this
 
 ### Industry Description
 
-### Typical Business Size
+### Business Types
 
-### Target Customers
+Examples:
 
-### Common Business Goals
+-
 
 ---
 
-## Business Challenges
+### Typical Customers
 
-### Challenge 1
+Rename this heading to match the industry's own term for its customers where appropriate (e.g., "Typical Guests" for hotels, "Typical Patients" for healthcare).
 
-### Challenge 2
+-
 
-### Challenge 3
+---
 
-...
+### Common Business Goals
+
+-
 
 ---
 
 ## Daily Operations
 
-Describe how businesses in this industry typically operate.
+Describe how businesses in this industry typically operate day to day.
 
 ---
 
 ## Customer Journey
 
-Step 1
+Rename this heading to match the industry's own term where appropriate (e.g., "Guest Journey", "Patient Journey").
 
-Step 2
-
-Step 3
-
-...
+1.
+2.
+3.
 
 ---
 
-## Common Customer Questions
+## Common Business Challenges
 
--
-
--
+Examples:
 
 -
 
@@ -72,7 +72,9 @@ Step 3
 
 ## AI Opportunities
 
-Potential areas where AI can create value.
+Examples:
+
+-
 
 ---
 
@@ -98,9 +100,7 @@ Potential areas where AI can create value.
 
 ## Suggested AI Agents
 
--
-
--
+Examples:
 
 -
 
@@ -108,32 +108,44 @@ Potential areas where AI can create value.
 
 ## Industry Terminology
 
-Term
+Examples:
 
-Definition
+-
 
 ---
 
-## KPIs
+## Common Software
 
-Typical success metrics for this industry.
+Examples:
+
+-
 
 ---
 
 ## Common Integrations
 
-CRM
+Examples:
 
-Booking System
+-
 
-ERP
+---
 
-Payment Gateway
+## KPIs
 
-etc.
+Examples:
+
+-
+
+---
+
+## Compliance Considerations
+
+Examples:
+
+-
 
 ---
 
 ## Notes
 
-Industry-specific considerations, regulations, or operational details.
+Industry-specific considerations, regulations, or operational details that don't fit elsewhere.
