@@ -57,6 +57,18 @@ Capture all information required for an AI Agent to understand, explain, compare
 
 ---
 
+### Key Benefits
+
+---
+
+### Typical Use Cases
+
+---
+
+### Expected Outcomes
+
+---
+
 ## Target Customers
 
 ### Primary Audience
@@ -145,6 +157,13 @@ Capture all information required for an AI Agent to understand, explain, compare
 
 ---
 
+### Consultation Available
+
+- Yes
+- No
+
+---
+
 ## Limitations
 
 ### Service Limitations
@@ -180,6 +199,10 @@ Capture all information required for an AI Agent to understand, explain, compare
 ---
 
 ### When Not to Recommend
+
+---
+
+### Related Services
 
 ---
 

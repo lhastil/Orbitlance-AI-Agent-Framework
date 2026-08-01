@@ -85,6 +85,12 @@ List similar ways customers may ask the same question.
 
 ---
 
+## Related FAQ
+
+Links to other FAQ entries that are related to this one (distinct from Alternative Questions, which are rephrasings of this same question).
+
+---
+
 ## Related Services
 
 ---

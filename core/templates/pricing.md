@@ -45,6 +45,18 @@ Examples:
 
 ---
 
+### Pricing Factors
+
+What causes price to vary between customers (e.g., project scope, integrations required, volume, support level).
+
+---
+
+### Consultation Policy
+
+When a custom quote or consultation is required before pricing can be shared.
+
+---
+
 ## Services & Pricing
 
 ### Service Name

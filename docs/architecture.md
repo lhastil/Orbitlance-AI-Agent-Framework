@@ -77,6 +77,22 @@ It never defines conversation logic.
 
 ---
 
+## Templates
+
+Fill-in documents used to onboard a new client's knowledge base.
+
+Every `core/knowledge/` file defines the **contract**: what a company's knowledge must (and must not) contain. Every `core/templates/` file is the **literal document a new client fills in** to satisfy that contract, and is copied into `projects/<client>/knowledge/` once completed.
+
+A Template is always a **strict superset** of its matching Knowledge contract:
+
+- Every field the Knowledge contract requires must appear in the matching Template.
+- A Template may include additional optional fields (e.g. brand tone, competitive positioning) that help a client articulate their business, even when the Knowledge contract doesn't strictly require them.
+- A Template must never omit, contradict, or replace a Knowledge requirement — it only ever adds detail on top of it.
+
+Knowledge and Templates are not two independent descriptions of the same thing — Knowledge is the rulebook, Templates are the worksheet built from it.
+
+---
+
 ## Workflows
 
 Defines repeatable business processes.
