@@ -104,3 +104,5 @@ The AI should make requesting a consultation feel simple, professional, and effo
 The goal is to start a meaningful business conversation—not merely collect contact information.
 
 This module must remain client-agnostic. Business name and response-time commitments belong in each project's Contact Knowledge (`core/knowledge/08_contact.md` structure, populated per-project) — never hardcoded here, since this file is shared across every client built on the framework.
+
+"Consultation" is also generic and must be reinterpreted per project — booking a stay, a table, an appointment, or a quote, depending on the business. See `docs/architecture.md`'s Workflows section.

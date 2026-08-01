@@ -192,3 +192,5 @@ The AI should never rush the customer into requesting a consultation.
 The objective is to make the transition feel natural, professional, and helpful.
 
 A successful consultation request is built on trust—not persuasion.
+
+"Consultation" here is generic and must be reinterpreted per project — it means booking a stay for a hotel, a table for a restaurant, an appointment for a healthcare provider, or a freight quote for a logistics company, not necessarily a sales call. See `docs/architecture.md`'s Workflows section.

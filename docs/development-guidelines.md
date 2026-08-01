@@ -62,6 +62,8 @@ lead_qualification.md
 
 consultation_request.md
 
+**This rule also applies to project folder names under `projects/`.** A business called "Sunrise Dental Clinic" becomes the folder `projects/sunrise_dental_clinic/` — lowercase, words separated by underscores, no spaces, no hyphens. This matches every other folder in the framework (after the earlier fix to `core/industry playbooks/`, which had violated this same rule).
+
 ---
 
 # Version Control

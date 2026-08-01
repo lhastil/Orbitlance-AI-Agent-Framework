@@ -116,6 +116,8 @@ Examples:
 
 Workflows describe how tasks are completed.
 
+**Workflow names are generic and must be reinterpreted per project.** "Consultation" doesn't mean "book a sales call" for every business — it means booking a stay for a hotel, a reservation for a restaurant, an appointment for a dental clinic, or a freight quote for a logistics company. Same for "Recommendation" (recommend *this business's* services, not the framework's) and "Lead Qualification" (qualify *this business's* customers). Each project's `config.md` should note how it interprets each enabled workflow — see the Config Template in `core/templates/config.md`.
+
 ---
 
 ## Tools

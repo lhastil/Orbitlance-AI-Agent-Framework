@@ -148,6 +148,16 @@ Examples:
 
 ---
 
+## Escalation Considerations
+
+Industry-specific urgent scenarios that should trigger escalation to a human, supplementing (never replacing) the universal conditions in `core/guardrails/escalation.md`.
+
+Examples:
+
+-
+
+---
+
 ## Notes
 
 Industry-specific considerations, regulations, or operational details that don't fit elsewhere.

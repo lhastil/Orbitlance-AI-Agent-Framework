@@ -2,9 +2,15 @@
 
 ## Purpose
 
-Provides a standardized template for documenting completed projects, case studies, and successful client engagements.
+Provides a standardized template for documenting completed projects, case studies, and successful outcomes.
 
-The objective is to enable AI Agents to present relevant business experience, demonstrate credibility, and support customer decision-making using verified project information.
+The objective is to enable AI Agents to present relevant business experience, demonstrate credibility, and support customer decision-making using verified examples.
+
+**This template is written in agency/client-services language** ("Client Name," "Business Challenge," "Proposed Solution") because that's the most common case. Not every business has "clients" in that sense — a hotel has guests, a restaurant has diners, a healthcare provider has patients. When this is the case:
+
+- Rename "Client Name" to the industry's own term (e.g., "Guest," "Patient") or omit it entirely for anonymized examples.
+- Treat "Business Challenge" / "Proposed Solution" as "Situation" / "What We Did" — the underlying shape (a real scenario, what was done, the outcome) still applies.
+- Always anonymize individual customers/patients/guests unless explicit, documented consent exists to use their name.
 
 ---
 

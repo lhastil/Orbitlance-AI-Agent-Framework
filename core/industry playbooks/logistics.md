@@ -190,6 +190,18 @@ Industry regulations and operational considerations.
 
 ---
 
+## Escalation Considerations
+
+Industry-specific urgent scenarios that should trigger escalation to a human, supplementing (never replacing) the universal conditions in `core/guardrails/escalation.md`.
+
+Examples:
+
+- A shipment is stuck at customs or otherwise blocked in transit
+- A carrier reports an accident, damaged freight, or safety incident
+- A time-sensitive delivery is at risk of missing a contractual deadline
+
+---
+
 ## Notes
 
 Focus on business efficiency, customer communication, operational visibility, and automation opportunities rather than technical implementation details.

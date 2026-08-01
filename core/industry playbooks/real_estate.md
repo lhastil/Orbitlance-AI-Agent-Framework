@@ -226,6 +226,18 @@ Examples:
 
 ---
 
+## Escalation Considerations
+
+Industry-specific urgent scenarios that should trigger escalation to a human, supplementing (never replacing) the universal conditions in `core/guardrails/escalation.md`.
+
+Examples:
+
+- A fair housing complaint or discrimination concern
+- A time-sensitive contract or closing deadline at risk
+- A safety concern during a property showing
+
+---
+
 ## Notes
 
 Focus on improving lead response speed, increasing appointment bookings, qualifying potential buyers and renters, and delivering a professional customer experience through AI-powered automation.

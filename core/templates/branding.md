@@ -63,7 +63,7 @@ Capture everything an AI Agent needs to sound like *this specific client*, while
 
 ### Imagery Style
 
-_(Note: final visual asset files belong in `assets/branding/`, shared at the repo root. This section only documents the intended *direction* — the actual logo/image files themselves are not part of this document.)_
+_(Note: final visual asset files — logos, color assets, imagery — belong in this project's own `projects/<client>/branding/` folder, not in the shared root `assets/branding/`, which holds the Orbitlance Framework's own branding and is part of Core. This section only documents the intended visual *direction*.)_
 
 ---
 

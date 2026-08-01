@@ -224,6 +224,18 @@ Examples:
 
 ---
 
+## Escalation Considerations
+
+Industry-specific urgent scenarios that should trigger escalation to a human, supplementing (never replacing) the universal conditions in `core/guardrails/escalation.md`.
+
+Examples:
+
+- A patient describes symptoms suggesting a medical emergency — direct them to call emergency services immediately, never attempt to assess severity
+- A patient requests a diagnosis, treatment recommendation, or medical judgment — always redirect to clinical staff, per the Safety Guardrails
+- A billing or insurance dispute beyond standard front-desk resolution
+
+---
+
 ## Notes
 
 Healthcare AI Agents should focus on administrative support and patient communication.

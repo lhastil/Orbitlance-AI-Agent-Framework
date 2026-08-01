@@ -227,6 +227,18 @@ Examples:
 
 ---
 
+## Escalation Considerations
+
+Industry-specific urgent scenarios that should trigger escalation to a human, supplementing (never replacing) the universal conditions in `core/guardrails/escalation.md`.
+
+Examples:
+
+- A customer reports a fraudulent charge or suspected account compromise
+- A high-value order dispute beyond standard return/refund policy
+- A pattern suggesting a wider fulfillment or payment system failure
+
+---
+
 ## Notes
 
 Focus on increasing sales, improving customer experience, reducing support workload, streamlining operations, and creating personalized shopping experiences through AI-powered solutions.

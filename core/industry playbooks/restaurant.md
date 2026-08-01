@@ -228,6 +228,18 @@ Examples:
 
 ---
 
+## Escalation Considerations
+
+Industry-specific urgent scenarios that should trigger escalation to a human, supplementing (never replacing) the universal conditions in `core/guardrails/escalation.md`.
+
+Examples:
+
+- A customer reports a suspected allergic reaction or foodborne illness
+- A significant order dispute involving a refund beyond standard policy
+- A safety incident on the premises
+
+---
+
 ## Notes
 
 Focus on improving customer experience, reducing staff workload, increasing operational efficiency, and providing fast, accurate, and friendly service through AI-powered solutions.

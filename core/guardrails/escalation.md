@@ -52,6 +52,8 @@ Escalate immediately when:
 - Sensitive account actions require authorization.
 - Technical issues exceed the AI's capabilities.
 
+These conditions are universal and apply to every project regardless of industry. Industry-specific urgent scenarios (e.g. a shipment stuck at customs for a logistics company, a guest safety report for a hotel, a patient emergency for a healthcare provider) are documented per-industry in each Industry Playbook's "Escalation Considerations" section — those supplement these universal conditions, they never replace or weaken them.
+
 ---
 
 ## Recommended Escalation Conditions

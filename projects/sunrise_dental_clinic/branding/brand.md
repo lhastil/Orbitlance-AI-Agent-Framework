@@ -19,7 +19,7 @@ This matches the Brand Identity section already recorded in `knowledge/01_compan
 
 ## Visual Identity (Direction Only)
 
-_(No final visual assets exist yet — this describes the intended direction for future logo/asset work in `assets/branding/`.)_
+_(No final visual assets exist yet — this describes the intended direction for future logo/asset work, which will live in `projects/sunrise_dental_clinic/branding/` when produced, not the shared root `assets/branding/`, which holds the Orbitlance Framework's own branding.)_
 
 - **Color direction:** Warm sunrise tones — soft orange/coral paired with a calm blue, evoking warmth and trust rather than a sterile clinical feel.
 - **Logo concept:** A simple sunrise motif paired with a smile-adjacent curve; avoid overly clinical iconography (e.g., no tooth-with-face mascots).

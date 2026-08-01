@@ -226,6 +226,19 @@ Examples:
 
 ---
 
+## Escalation Considerations
+
+Industry-specific urgent scenarios that should trigger escalation to a human, supplementing (never replacing) the universal conditions in `core/guardrails/escalation.md`.
+
+Examples:
+
+- A guest reports a safety or security concern in their room
+- A medical emergency involving a guest or staff member
+- A significant property damage or maintenance failure affecting guest safety
+- A guest dispute involving law enforcement
+
+---
+
 ## Notes
 
 Focus on delivering exceptional guest experiences, improving operational efficiency, reducing front desk workload, and providing fast, multilingual support through AI-powered solutions.

@@ -92,3 +92,5 @@ Lead qualification is complete when the AI can confidently determine:
 The purpose of qualification is not to filter people out.
 
 Its purpose is to ensure that users receive the most appropriate next step while helping the business focus on meaningful opportunities.
+
+Reinterpreted per project — "qualifying a lead" means qualifying *that project's own* customers (e.g., whether a caller's dental issue matches Sunrise Dental's services), not qualifying prospects for the Orbitlance Framework itself. See `docs/architecture.md`'s Workflows section.

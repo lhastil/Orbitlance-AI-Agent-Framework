@@ -31,9 +31,11 @@ A project fills in the 8 knowledge templates (Company, Services, FAQ, Process, T
 
 ### 2. Branding — `projects/<client>/branding/`
 
-Overrides: tone-of-voice and identity details referenced by `core/prompts/01_core_personality.md` (e.g. brand personality, writing style) and visual assets referenced by `assets/branding/`.
+Overrides: tone-of-voice and identity details referenced by `core/prompts/01_core_personality.md` (e.g. brand personality, writing style).
 
-Core Personality itself (the underlying behavioral contract — professional, honest, concise, etc.) is never overridden; only the client-specific *expression* of it (brand voice, visual identity) lives here.
+Core Personality itself (the underlying behavioral contract — professional, honest, concise, etc.) is never overridden; only the client-specific *expression* of it (brand voice, visual identity direction) lives here.
+
+**Relationship to `assets/branding/`:** these are two different things. `assets/branding/` at the repo root holds the Orbitlance Framework's *own* branding assets (e.g. for framework-level documentation or presentation material) — it is part of Core and is never client-specific. Each client's own visual identity (logo files, color assets, imagery) belongs under `projects/<client>/branding/` instead, never in the shared root `assets/` folder.
 
 ### 3. Integrations — `projects/<client>/integrations/`
 
@@ -54,6 +56,8 @@ Overrides: nothing on its own — this is the **index** that tells the framework
 - A playbook is never copied into a project's Knowledge automatically. There is no mechanism, script, or process that does this, and none should ever be built.
 - A playbook exists to **guide the human** who is writing that project's Knowledge (extension point 1) — it's reference material for what to consider (common challenges, typical services, terminology, KPIs), not source content to paste in.
 - If a client's needs diverge from the shared playbook, that divergence belongs entirely in the client's own Knowledge — never in a client-specific copy of the playbook.
+
+**Selecting more than one playbook is allowed and doesn't require a precedence rule.** A hotel that also runs its own restaurant can select both `hotel.md` and `restaurant.md`. Because playbooks are reference-only (never executed or merged at runtime — see above), there's no runtime conflict to resolve: the human writing that project's Knowledge simply consults every selected playbook and produces one coherent Knowledge base. If two playbooks' example guidance would conflict, neither playbook decides the answer — the project's actual business reality does, and that answer goes into Knowledge, not into a merged or prioritized playbook.
 
 ---
 
