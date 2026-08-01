@@ -59,7 +59,7 @@ Capture all fundamental company information required for an AI Agent to understa
 
 ### Industries Served
 
-The industries this business's own customers belong to (e.g., which client industries Orbitlance itself serves) — distinct from "Industry" above, which is this business's own classification.
+The industries this business's own customers belong to — distinct from "Industry" above, which is this business's own classification.
 
 ---
 
