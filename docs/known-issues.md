@@ -59,6 +59,23 @@ All three guardrail files list each other as Dependencies (Safety → Escalation
 
 ---
 
+### 5. No runtime-accessible home for industry-specific escalation/behavioral rules, given Playbooks are human-only and Knowledge is facts-only
+
+**Severity:** High
+**Found during:** Runtime Specification (Guardrail Engine module spec)
+
+Each Industry Playbook has an "Escalation Considerations" section (e.g. Healthcare's "never diagnose," "direct medical emergencies to call emergency services"). But the framework establishes three constraints that, together, leave this content with nowhere to actually live at runtime:
+
+1. Playbooks are reference-only and must never be loaded into the runtime automatically (per the QA-03 fix) — they only guide the human writing a project's Knowledge.
+2. Knowledge stores facts, not behavior/conversation logic (per `docs/development-guidelines.md`'s Knowledge Guidelines) — "never diagnose" isn't a fact about the business, so it doesn't belong in Knowledge either.
+3. Core Guardrails are universal and must never be modified per client or per industry (Rule 5) — so a Healthcare-specific rule can't simply be added to `core/guardrails/`.
+
+The result: an industry-specific behavioral rule a human read in a Playbook has no correct, defined place to actually end up where the runtime can enforce it. The Runtime Specification's Guardrail Engine module is scoped to enforce only the universal Core guardrails bundle as a result — it does not (and per current framework rules, cannot) enforce industry-specific escalation rules like "never diagnose" today.
+
+**Recommendation:** This needs a framework-level decision, not a runtime workaround: likely a new, explicitly-scoped extension point or Config field allowing a project to declare industry-informed behavioral additions in its own words (distinct from Knowledge's facts-only scope and from Core's universal-only scope). Not resolved now, per current direction.
+
+---
+
 ## Notes
 
 This file is itself part of Core and should never accumulate silently — issues here are either promoted to a fix (and removed from this list) or explicitly deferred with a reason, not forgotten.
