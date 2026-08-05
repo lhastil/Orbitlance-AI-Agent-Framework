@@ -13,6 +13,10 @@ from runtime.models.project_context import (
 )
 from runtime.models.severity import Severity
 from runtime.models.validation import (
+    RuleExecution,
+    RuleOutcome,
+    SkipReason,
+    ValidationCoverage,
     ValidationIssue,
     ValidationResult,
     ValidationTarget,
@@ -23,7 +27,11 @@ __all__ = [
     "ExtensionPoint",
     "ProjectContext",
     "ProjectDocument",
+    "RuleExecution",
+    "RuleOutcome",
     "Severity",
+    "SkipReason",
+    "ValidationCoverage",
     "ValidationIssue",
     "ValidationResult",
     "ValidationTarget",

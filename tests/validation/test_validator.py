@@ -11,7 +11,14 @@ from __future__ import annotations
 import pytest
 
 from runtime.models.severity import Severity
-from runtime.models.validation import ValidationIssue, ValidationTarget
+from runtime.models.validation import (
+    RuleExecution,
+    RuleOutcome,
+    SkipReason,
+    ValidationCoverage,
+    ValidationIssue,
+    ValidationTarget,
+)
 from runtime.validation import (
     RuleRegistry,
     ValidationPipeline,
@@ -23,6 +30,7 @@ from runtime.validation.registry import DuplicateRuleError
 from runtime.validation.rule import ProjectRule, ProjectRuleContext
 from tests.validation.conftest import (
     VALID_CONFIG,
+    FakeProviderRegistry,
     document,
     extension_point,
     knowledge_documents,
@@ -33,7 +41,12 @@ from tests.validation.conftest import (
 
 @pytest.fixture()
 def validator() -> Validator:
-    return Validator()
+    """A fully-equipped validator: every collaborator supplied.
+
+    Tests asserting a project is valid MUST use this, because a validator
+    missing a collaborator can no longer return `valid=True` for anything.
+    """
+    return Validator(provider_registry=FakeProviderRegistry())
 
 
 # --- spec scenario (a): a fully valid project passes -----------------------
@@ -349,3 +362,139 @@ def test_issue_rejects_empty_mandatory_fields() -> None:
 
 def test_default_rule_set_is_non_trivial() -> None:
     assert len(default_project_rules()) >= 10
+
+
+# --- V-1 / V-2 regression: fail-closed coverage semantics -------------------
+def test_no_provider_registry_yields_partial_coverage_not_valid() -> None:
+    """V-1 regression.
+
+    Omitting the Provider Registry must never produce a 'valid' verdict. The
+    previous revision substituted a permissive stand-in and downgraded an
+    unregistered provider to a WARNING, so a project naming a nonexistent
+    provider passed. Now the rule simply cannot run and says so.
+    """
+    bare = Validator()  # no registry injected
+    result = bare.validate_project(make_project(), make_core())
+
+    assert result.coverage is ValidationCoverage.PARTIAL
+    assert not result.valid, "unverified provider must never read as valid"
+    assert not result.has_blocking_issues, "the gap is coverage, not a defect"
+
+    gap = next(
+        e for e in result.coverage_gaps if e.rule_id == "config.llm_provider_registered"
+    )
+    assert gap.skip_reason is SkipReason.COLLABORATOR_UNAVAILABLE
+
+
+def test_unregistered_provider_is_a_blocking_error_when_registry_present() -> None:
+    """V-1 regression: with a real registry, a bogus provider is an ERROR."""
+    validator = Validator(provider_registry=FakeProviderRegistry({"anthropic"}))
+    config = document(
+        "config.md", VALID_CONFIG.replace("**Primary:** anthropic", "**Primary:** nope")
+    )
+    result = validator.validate_project(make_project(config=config), make_core())
+
+    issue = next(i for i in result.issues if i.code == codes.CONF_PROVIDER_NOT_REGISTERED)
+    assert issue.severity is Severity.ERROR
+    assert not result.valid
+
+
+def test_missing_core_bundle_yields_partial_coverage(validator: Validator) -> None:
+    """V-2 regression: Core-dependent rules skipped => not conclusively valid."""
+    result = validator.validate_project(make_project())  # no core
+
+    assert result.coverage is ValidationCoverage.PARTIAL
+    assert not result.valid
+    skipped_ids = {e.rule_id for e in result.coverage_gaps}
+    assert "config.playbook_exists" in skipped_ids
+    assert "knowledge.template_available" in skipped_ids
+
+
+def test_every_rule_is_accounted_for_in_executions(validator: Validator) -> None:
+    """V-2: a skipped rule is never indistinguishable from a passing one."""
+    result = validator.validate_project(make_project(), make_core())
+
+    assert len(result.executions) == validator.project_rule_count
+    assert {e.rule_id for e in result.executions} == {
+        r.rule_id for r in default_project_rules()
+    }
+    assert all(e.outcome is not RuleOutcome.SKIPPED or e.skip_reason for e in result.executions)
+
+
+def test_precondition_skips_do_not_reduce_coverage(validator: Validator) -> None:
+    """Absent data already reported elsewhere is not a coverage gap."""
+    project = make_project(knowledge=extension_point("knowledge", [], present=False))
+    result = validator.validate_project(project, make_core())
+
+    knowledge_skips = [
+        e for e in result.skipped if e.rule_id.startswith("knowledge.")
+    ]
+    assert knowledge_skips, "knowledge rules should skip when the folder is absent"
+    assert all(
+        e.skip_reason is SkipReason.PRECONDITION_ABSENT for e in knowledge_skips
+    )
+    assert result.coverage is ValidationCoverage.COMPLETE
+    assert not result.valid, "still invalid -- the missing folder is a blocking error"
+
+
+def test_crashed_rule_reduces_coverage_and_blocks() -> None:
+    pipeline = ValidationPipeline(RuleRegistry([_ExplodingRule()]))
+    validator = Validator(project_pipeline=pipeline)
+    result = validator.validate_project(make_project())
+
+    execution = result.executions[0]
+    assert execution.outcome is RuleOutcome.FAILED
+    assert result.coverage is ValidationCoverage.PARTIAL
+    assert not result.valid
+
+
+def test_rule_execution_rejects_unexplained_skip() -> None:
+    with pytest.raises(ValueError):
+        RuleExecution(rule_id="x", outcome=RuleOutcome.SKIPPED)
+
+
+# --- V-4 regression: deterministic section resolution ----------------------
+def test_shorter_heading_does_not_satisfy_a_longer_required_section(
+    validator: Validator,
+) -> None:
+    """V-4 regression.
+
+    Prefix matching previously let '## Knowledge' satisfy the requirement for
+    'Knowledge Status' and bind the wrong body to downstream checks.
+    """
+    config = document(
+        "config.md", VALID_CONFIG.replace("## Knowledge Status", "## Knowledge")
+    )
+    result = validator.validate_project(make_project(config=config), make_core())
+
+    missing = [i for i in result.issues if i.code == codes.CONF_SECTION_MISSING]
+    assert any(i.section == "Knowledge Status" for i in missing)
+    assert not result.valid
+
+
+def test_documented_plural_alias_is_accepted(validator: Validator) -> None:
+    """The one real variant in the framework's own template still resolves."""
+    config = document(
+        "config.md",
+        VALID_CONFIG.replace(
+            "## Active Industry Playbook", "## Active Industry Playbook(s)"
+        ),
+    )
+    result = validator.validate_project(make_project(config=config), make_core())
+
+    assert codes.CONF_SECTION_MISSING not in result.codes()
+    assert result.valid, result.render()
+
+
+def test_unrecognised_heading_does_not_absorb_a_requirement(
+    validator: Validator,
+) -> None:
+    config = document(
+        "config.md", VALID_CONFIG.replace("## LLM Provider", "## Model Configuration")
+    )
+    result = validator.validate_project(make_project(config=config), make_core())
+
+    assert any(
+        i.code == codes.CONF_SECTION_MISSING and i.section == "LLM Provider"
+        for i in result.issues
+    )

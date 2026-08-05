@@ -19,7 +19,7 @@ from runtime.models.severity import Severity
 from runtime.models.validation import ValidationIssue
 from runtime.validation import codes
 from runtime.validation import framework_spec as spec
-from runtime.validation.rule import ProjectRule, ProjectRuleContext
+from runtime.validation.rule import Collaborator, ProjectRule, ProjectRuleContext
 
 
 def _is_placeholder(text: str) -> bool:
@@ -87,17 +87,14 @@ class KnowledgeTemplateAvailableRule(ProjectRule):
 
     rule_id = "knowledge.template_available"
     description = "Each knowledge document has a corresponding Core template."
+    required_collaborators = frozenset({Collaborator.CORE_BUNDLE})
 
     def is_applicable(self, context: ProjectRuleContext) -> bool:
-        return (
-            context.project.knowledge.present
-            and context.core is not None
-            and bool(context.core.templates)
-        )
+        return context.project.knowledge.present
 
     def evaluate(self, context: ProjectRuleContext) -> Iterable[ValidationIssue]:
         core = context.core
-        assert core is not None  # guarded by is_applicable
+        assert core is not None  # guaranteed by required_collaborators
 
         for doc_name, template_name in spec.KNOWLEDGE_TEMPLATE_BY_DOCUMENT.items():
             document = context.project.knowledge.document(doc_name)

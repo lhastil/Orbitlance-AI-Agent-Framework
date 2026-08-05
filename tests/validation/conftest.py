@@ -153,14 +153,27 @@ def make_project(
     )
 
 
+def default_templates() -> dict[str, str]:
+    """A template for each of the 8 knowledge documents.
+
+    Present by default so the happy path exercises a fully-loaded Core rather
+    than accidentally relying on missing-template warnings being harmless.
+    """
+    return {
+        template: f"# {template}\n\n## Overview\n"
+        for template in spec.KNOWLEDGE_TEMPLATE_BY_DOCUMENT.values()
+    }
+
+
 def make_core(
     *,
     playbooks: Iterable[str] = ("healthcare", "hotel", "restaurant"),
     templates: Mapping[str, str] | None = None,
 ) -> CoreBundle:
+    source = default_templates() if templates is None else dict(templates)
     template_docs = {
         name: document(name, text, relative_path=f"core/templates/{name}")
-        for name, text in (templates or {}).items()
+        for name, text in source.items()
     }
     return CoreBundle(
         prompts={
@@ -182,3 +195,21 @@ def make_core(
         templates=template_docs,
         playbook_names=frozenset(playbooks),
     )
+
+
+class FakeProviderRegistry:
+    """Authoritative test double for ProviderRegistryPort.
+
+    Implements the full Protocol and nothing more -- there is no side channel
+    by which a registry influences severity, so a double cannot accidentally
+    diverge from a real implementation.
+    """
+
+    def __init__(self, providers: Iterable[str] = ("anthropic",)) -> None:
+        self._providers = frozenset(providers)
+
+    def is_registered(self, provider_id: str) -> bool:
+        return provider_id in self._providers
+
+    def registered_providers(self) -> frozenset[str]:
+        return self._providers

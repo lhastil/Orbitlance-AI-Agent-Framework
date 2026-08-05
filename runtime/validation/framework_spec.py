@@ -130,6 +130,36 @@ REQUIRED_CONFIG_SECTIONS: Final[tuple[str, ...]] = (
     "Operating Constraints",
 )
 
+# Heading spellings that resolve to a canonical required section.
+#
+# Resolution is an exact lookup on the normalised heading -- deliberately NOT
+# prefix or fuzzy matching. An earlier revision matched prefixes in both
+# directions, which meant a heading of "Knowledge" satisfied the requirement for
+# "Knowledge Status" and bound the wrong body to every downstream check.
+#
+# Every alias below is a spelling that actually occurs in the frozen framework
+# (core/templates/config.md writes the plural form; the projects write the
+# singular). Adding an entry is a deliberate act, not a heuristic side effect.
+CONFIG_SECTION_ALIASES: Final[dict[str, str]] = {
+    "active industry playbook": "Active Industry Playbook",
+    "active industry playbook(s)": "Active Industry Playbook",
+    "knowledge status": "Knowledge Status",
+    "branding status": "Branding Status",
+    "integrations status": "Integrations Status",
+    "llm provider": "LLM Provider",
+    "enabled workflows": "Enabled Workflows",
+    "operating constraints": "Operating Constraints",
+}
+
+
+def canonical_config_section(heading: str) -> str | None:
+    """Resolve a config.md heading to its canonical section name.
+
+    Returns None for headings that are not one of the required sections, so an
+    unrecognised heading is simply ignored rather than absorbing a requirement.
+    """
+    return CONFIG_SECTION_ALIASES.get(heading.strip().lstrip("#").strip().casefold())
+
 # --- Extension points ------------------------------------------------------
 # Source: docs/project-configuration.md — the four documented extension points.
 KNOWLEDGE_DIR: Final[str] = "knowledge"

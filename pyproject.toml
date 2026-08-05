@@ -29,3 +29,4 @@ select = ["F", "E", "W", "I", "N", "UP", "B", "ARG", "SIM", "RET", "C4"]
 # hard floor for every consumer.
 "runtime/models/severity.py" = ["UP042"]
 "runtime/models/validation.py" = ["UP042"]
+"runtime/validation/rule.py" = ["UP042"]
