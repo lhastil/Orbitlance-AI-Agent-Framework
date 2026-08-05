@@ -23,9 +23,9 @@ Give anyone (human or AI) a single place to see exactly what this project has co
 
 ## Active Industry Playbook(s)
 
-Name the playbook(s) from `core/industry playbooks/` this project selects. Remember: selecting a playbook is a reference, not a copy — see `docs/project-configuration.md`.
+Name the playbook(s) from `core/industry_playbooks/` this project selects. Remember: selecting a playbook is a reference, not a copy — see `docs/project-configuration.md`.
 
-If more than one playbook applies (e.g. a hotel that also runs its own restaurant), note that explicitly — this framework does not yet define precedence rules for multiple simultaneous playbooks, so document your own reasoning here until that's resolved framework-wide.
+If more than one playbook applies (e.g. a hotel that also runs its own restaurant), list all of them. No precedence rule is needed: because playbooks are reference-only and never merged at runtime, the human writing this project's Knowledge consults every selected playbook and produces one coherent Knowledge base. See `docs/project-configuration.md`.
 
 ---
 
@@ -49,7 +49,19 @@ State whether brand voice and visual identity direction are complete.
 
 Location: `projects/<client>/integrations/`
 
-List which tool contracts (CRM, Calendar, Email, other) have a provider configured.
+State which of the five `core/tools/` contracts have a provider configured: CRM, Calendar, Email, Consultation Form, General Integrations. An unconfigured contract degrades that capability at runtime, so note any left unconfigured deliberately.
+
+---
+
+## LLM Provider
+
+Which provider and model this project's agent runs on, and optionally a secondary provider for failover.
+
+The named provider must be registered in the runtime's Provider Registry — a project configured for an unregistered provider fails validation before activation, not at first request.
+
+- **Primary:**
+- **Model:**
+- **Secondary (optional):**
 
 ---
 
@@ -57,13 +69,31 @@ List which tool contracts (CRM, Calendar, Email, other) have a provider configur
 
 List which workflows from `core/workflows/` are active for this project, and briefly note how each is reinterpreted for this specific business if it isn't a literal sales-consultation context (e.g., "Consultation" workflow maps to booking a stay for a hotel, a reservation for a restaurant, or a freight quote for a logistics company).
 
+The six available workflows are: Discovery, Recommendation, Consultation, CRM Sync, Follow-up, Voice Agent.
+
+---
+
+## Operating Constraints
+
+Industry- or client-specific behavioral limits this agent must observe, written in this project's own words.
+
+**Why this section exists:** Industry Playbooks are reference-only and never load at runtime, and Knowledge holds facts rather than behavior — so an industry-specific rule a human read in a Playbook (e.g. a healthcare agent must never diagnose) needs a home the runtime can actually read. This is that home.
+
+**Strict scope — these constraints may only ADD restrictions:**
+
+- They may narrow what the agent is allowed to do beyond what Core already forbids.
+- They may **never** relax, weaken, or override anything in `core/guardrails/`. Core's universal guardrails always apply in full; anything here is layered strictly on top.
+- They are behavioral limits only — not facts (those belong in Knowledge), not tone (that belongs in Branding), not process steps (those belong in Core's workflows).
+
+Leave empty if this project has no constraints beyond Core's universal guardrails.
+
 ---
 
 ## Validation Checklist
 
 Before using this template, verify that:
 
-- Every selected industry playbook actually exists in `core/industry playbooks/`.
+- Every selected industry playbook actually exists in `core/industry_playbooks/`.
 - Nothing here restates content that belongs in Knowledge, Branding, or Integrations — this file only points to and summarizes them.
 - No prompt, guardrail, workflow, or tool contract is redefined here.
 

@@ -97,7 +97,7 @@ Knowledge and Templates are not two independent descriptions of the same thing �
 
 ## Industry Playbooks
 
-Shared, per-industry reference material (`core/industry playbooks/`) covering common challenges, typical services, terminology, and KPIs for a given industry.
+Shared, per-industry reference material (`core/industry_playbooks/`) covering common challenges, typical services, terminology, and KPIs for a given industry.
 
 **A playbook is reference-only.** It is never copied into a project's Knowledge automatically — there is no mechanism that does this. A playbook exists to guide the *human* writing a project's Knowledge, informing what to consider; it is not source content to paste in. See `docs/project-configuration.md` for the full rule.
 
@@ -107,14 +107,20 @@ Shared, per-industry reference material (`core/industry playbooks/`) covering co
 
 Defines repeatable business processes.
 
-Examples:
+`core/workflows/` contains exactly six workflows — this is the complete list, not a sample:
 
-- Consultation Request
-- Lead Qualification
-- CRM Sync
-- Voice Call Flow
+| Workflow | File |
+|---|---|
+| Discovery | `discovery.md` |
+| Recommendation | `recommendation.md` |
+| Consultation | `consultation.md` |
+| CRM Sync | `crm_sync.md` |
+| Follow-up | `follow_up.md` |
+| Voice Agent | `voice_agent.md` |
 
 Workflows describe how tasks are completed.
+
+**Lead Qualification is deliberately prompt-only.** It exists as `core/prompts/06_lead_qualification.md` with no corresponding workflow file. This is intentional, not an omission: Discovery, Recommendation, and Consultation each describe a multi-step process with its own trigger, steps, and completion criteria, whereas Lead Qualification is a continuous *judgment* the agent applies while inside those workflows — deciding whether the person it's already talking to is a fit. It has no independent step sequence of its own, so modelling it as a workflow would create an empty shell. Workflow files referencing "Lead Qualification" as a dependency refer to this prompt module.
 
 **Workflow names are generic and must be reinterpreted per project.** "Consultation" doesn't mean "book a sales call" for every business — it means booking a stay for a hotel, a reservation for a restaurant, an appointment for a dental clinic, or a freight quote for a logistics company. Same for "Recommendation" (recommend *this business's* services, not the framework's) and "Lead Qualification" (qualify *this business's* customers). Each project's `config.md` should note how it interprets each enabled workflow — see the Config Template in `core/templates/config.md`.
 

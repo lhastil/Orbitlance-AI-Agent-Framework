@@ -30,6 +30,14 @@ Records which concrete providers fulfill each vendor-agnostic tool contract defi
 
 ---
 
+## Consultation Form Tool (`core/tools/consultation_form.md`)
+
+**Provider:** Practice management software's patient intake/appointment-request module, fed by the website booking widget.
+
+**Notes:** For this project, a "consultation request" is an appointment request (see `config.md`'s workflow interpretation). Completed requests land directly in the practice management system alongside the patient record, rather than in a separate forms backend — the same system already serving as this project's CRM and Calendar.
+
+---
+
 ## General Integrations (`core/tools/integrations.md`)
 
 **Additional connections:**

@@ -8,9 +8,9 @@ Project-level configuration for the Sunrise Dental Clinic AI agent, following th
 
 ## Active Industry Playbook
 
-`core/industry playbooks/healthcare.md`
+`core/industry_playbooks/healthcare.md`
 
-Sunrise Dental Clinic is a healthcare provider. The AI agent must follow the Healthcare Industry Playbook's boundary at all times: it may support scheduling, FAQ, and general information, but must never diagnose conditions, recommend treatment, or provide medical judgment.
+Sunrise Dental Clinic is a healthcare provider. Selected as reference material for authoring this project's Knowledge and Operating Constraints — the playbook itself never loads at runtime. The behavioral limits it informed are declared explicitly under Operating Constraints below.
 
 ---
 
@@ -35,7 +35,27 @@ Filled in — `brand.md` defines brand voice; visual assets (logo, color palette
 
 Location: `projects/sunrise_dental_clinic/integrations/`
 
-Filled in — `integrations.md` documents provider selection for CRM, Calendar, Email, and SMS. No credentials stored in this repository.
+Filled in — `integrations.md` documents provider selection for all five `core/tools/` contracts: CRM, Calendar, Email, Consultation Form, and General Integrations (SMS + booking widget). No credentials stored in this repository.
+
+---
+
+## LLM Provider
+
+- **Primary:** _(not yet selected — must be set and registered before activation)_
+- **Model:** _(not yet selected)_
+- **Secondary (optional):** _(none)_
+
+---
+
+## Operating Constraints
+
+Additive behavioral limits for this project. These narrow what the agent may do; they never relax `core/guardrails/`.
+
+- **Never diagnose a condition.** The agent may describe services and general information, but must never assess a patient's symptoms or suggest what condition they have.
+- **Never recommend or advise on treatment.** Treatment decisions belong to the clinical staff. Redirect any such request to the practice.
+- **Never provide medical judgment of any kind**, including opinions on urgency beyond directing genuine emergencies to appropriate care.
+- **Escalate suspected medical emergencies immediately** — direct the patient to call emergency services or seek in-person care; never attempt to assess severity.
+- **Never quote a price for treatment requiring an in-person exam** (implants, veneers, root canals) — offer a consultation instead, per `knowledge/06_pricing.md`.
 
 ---
 
@@ -57,7 +77,7 @@ Not enabled: none of the six workflows were excluded — all apply naturally to 
 ## Dependencies
 
 - Core/Project Override Contract (`docs/project-configuration.md`)
-- Healthcare Industry Playbook (`core/industry playbooks/healthcare.md`)
+- Healthcare Industry Playbook (`core/industry_playbooks/healthcare.md`)
 - Core Knowledge Templates (`core/templates/`)
 - Tools (`core/tools/`)
 

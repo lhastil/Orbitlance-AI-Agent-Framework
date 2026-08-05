@@ -132,8 +132,10 @@ Anything outside this scope should not be attempted.
 
 ## Dependencies
 
-- Escalation Guardrails
-- Compliance Guardrails
+**Bundle membership:** This file is one of the three members of the **Guardrails Bundle** (`safety.md`, `escalation.md`, `compliance.md`). The three are inseparable and always load together as one atomic unit — no member is meaningful without the others, and there is no load order among them. Bundle membership is a peer relationship, not a dependency, so members do not list each other here.
+
+**External dependencies:**
+
 - Conversation Rules
 - Tool Instructions
 

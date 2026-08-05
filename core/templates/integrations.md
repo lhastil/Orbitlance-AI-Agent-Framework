@@ -52,13 +52,27 @@ Contract: `core/tools/email.md`
 
 ---
 
+## Consultation Form Tool
+
+Contract: `core/tools/consultation_form.md`
+
+### Provider
+
+Where completed consultation requests are actually delivered and stored (e.g. the CRM, a dedicated form backend, an email destination).
+
+### Configuration Notes
+
+---
+
 ## General Integrations
 
 Contract: `core/tools/integrations.md`
 
+This is the catch-all contract for connections not covered by the four named tools above — it is **not** the same thing as the Integrations extension point (this whole file). See `docs/project-configuration.md`.
+
 ### Additional Connections
 
-List any other providers this project connects to that aren't covered by CRM/Calendar/Email above.
+List any other providers this project connects to that aren't covered by CRM/Calendar/Email/Consultation Form above.
 
 ---
 
@@ -67,6 +81,7 @@ List any other providers this project connects to that aren't covered by CRM/Cal
 Before using this template, verify that:
 
 - Every listed provider maps back to a real `core/tools/` contract.
+- All five `core/tools/` contracts have been considered — CRM, Calendar, Email, Consultation Form, and General Integrations. A contract this project genuinely doesn't need may be left unconfigured, but that should be a deliberate choice, not an oversight (an unconfigured contract degrades that capability at runtime; see `docs/project-configuration.md`).
 - No credentials, API keys, or endpoint secrets appear anywhere in this document.
 - Providers are specific enough to be actionable (e.g., "Google Calendar," not just "a calendar").
 

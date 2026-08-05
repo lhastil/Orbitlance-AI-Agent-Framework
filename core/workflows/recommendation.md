@@ -164,8 +164,9 @@ If new business needs emerge:
 
 - Discovery Summary
 - Company Knowledge
-- Industry Playbooks
 - Services
+
+Industry Playbooks are not an input. They are reference-only and never load at runtime — their influence arrives indirectly, through the Knowledge a human authored using them.
 
 ---
 
@@ -179,10 +180,12 @@ If new business needs emerge:
 
 ## Dependencies
 
+Dependencies are what this workflow **requires as input**. A workflow that consumes this one's output is not a dependency of it — that relationship is declared by the consuming workflow, in one direction only.
+
 - Discovery Workflow
 - Services Knowledge
-- Industry Playbooks
-- Consultation Request
+
+Consultation is intentionally **not** listed here. Recommendation runs *before* Consultation and feeds it; that relationship is declared in `consultation.md`'s own Dependencies list, where it belongs.
 
 ---
 

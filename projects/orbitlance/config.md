@@ -27,7 +27,7 @@ _(placeholder — e.g. none yet; Orbitlance sells to businesses across multiple 
 
 Location: `projects/orbitlance/knowledge/`
 
-_(placeholder — not yet filled in; see `core/templates/` for the 7 required documents)_
+_(placeholder — not yet filled in; see `core/templates/` for the 8 required documents)_
 
 ---
 
@@ -47,9 +47,25 @@ _(placeholder — not yet filled in; see `core/tools/` for the contracts each in
 
 ---
 
+## LLM Provider
+
+- **Primary:** _(placeholder — not yet selected)_
+- **Model:** _(placeholder)_
+- **Secondary (optional):** _(placeholder)_
+
+---
+
+## Operating Constraints
+
+Additive behavioral limits for this project. These narrow what the agent may do; they never relax `core/guardrails/`.
+
+_(placeholder — none identified yet; Orbitlance operates across industries rather than within one regulated vertical.)_
+
+---
+
 ## Enabled Workflows
 
-Which optional workflows from `core/workflows/` are active for this project (e.g. is Voice Agent enabled?).
+Which of the six workflows from `core/workflows/` (Discovery, Recommendation, Consultation, CRM Sync, Follow-up, Voice Agent) are active for this project.
 
 _(placeholder)_
 
@@ -59,7 +75,7 @@ _(placeholder)_
 
 - Core/Project Override Contract (`docs/project-configuration.md`)
 - Core Knowledge Templates (`core/templates/`)
-- Industry Playbooks (`core/industry playbooks/`)
+- Industry Playbooks (`core/industry_playbooks/`)
 - Tools (`core/tools/`)
 
 ---

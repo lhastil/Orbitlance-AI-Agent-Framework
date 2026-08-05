@@ -23,18 +23,26 @@ Orbitlance-AI-Agent-Framework/
 ├── docs/
 │   ├── architecture.md
 │   ├── development-guidelines.md
+│   ├── project-configuration.md
+│   ├── runtime-specification.md
+│   └── known-issues.md
 │
 ├── core/
 │   ├── prompts/
 │   ├── knowledge/
-│   ├── industry playbooks/
+│   ├── industry_playbooks/
 │   ├── guardrails/
 │   ├── tools/
 │   ├── templates/
 │   └── workflows/
 │
 ├── projects/
-│   └── orbitlance/
+│   ├── orbitlance/
+│   │   ├── knowledge/
+│   │   ├── branding/
+│   │   ├── integrations/
+│   │   └── config.md
+│   └── sunrise_dental_clinic/
 │       ├── knowledge/
 │       ├── branding/
 │       ├── integrations/
@@ -45,16 +53,16 @@ Orbitlance-AI-Agent-Framework/
     └── diagrams/
 ```
 
-See [docs/architecture.md](docs/architecture.md) for how these pieces relate to one another, and [docs/development-guidelines.md](docs/development-guidelines.md) for how to work in this repository.
+See [docs/architecture.md](docs/architecture.md) for how these pieces relate to one another, [docs/project-configuration.md](docs/project-configuration.md) for the Core/Project override contract, [docs/runtime-specification.md](docs/runtime-specification.md) for the runtime implementation blueprint, [docs/development-guidelines.md](docs/development-guidelines.md) for how to work in this repository, and [docs/known-issues.md](docs/known-issues.md) for tracked architectural issues.
 
 ### Module Overview
 
 - **`core/prompts/`** — the agent's reusable base personality, mission and conversational behavior.
 - **`core/knowledge/`** — reusable knowledge-base structure (company, services, FAQ, pricing, etc.).
-- **`core/industry playbooks/`** — industry-specific guidance layered on top of the base agent.
-- **`core/guardrails/`** — safety, escalation and compliance boundaries.
-- **`core/tools/`** — definitions of external tools/integrations the agent can call.
-- **`core/templates/`** — blank templates used to onboard a new client's knowledge base.
+- **`core/industry_playbooks/`** — per-industry reference material. Reference-only: guides the human authoring a project's Knowledge and Operating Constraints, never loaded at runtime.
+- **`core/guardrails/`** — safety, escalation and compliance boundaries, loaded together as one atomic bundle.
+- **`core/tools/`** — the five vendor-agnostic tool contracts the agent can act through.
+- **`core/templates/`** — blank templates used to onboard a new client across all four extension points.
 - **`core/workflows/`** — step-by-step process definitions for key agent workflows.
 - **`projects/`** — per-client configuration and data that consumes the `core/` framework.
 - **`assets/`** — branding assets and diagrams supporting the documentation.

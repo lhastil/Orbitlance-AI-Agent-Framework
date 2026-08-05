@@ -136,9 +136,12 @@ Otherwise:
 
 ## Dependencies
 
+Dependencies are what this workflow **requires as input at runtime**.
+
 - Conversation Rules
 - Knowledge Base
-- Industry Playbooks
+
+Industry Playbooks are intentionally **not** listed. Playbooks are reference-only — they inform the human writing this project's Knowledge, and never load at runtime (see `docs/project-configuration.md`). Their influence reaches this workflow indirectly, through the Knowledge the human produced.
 
 ---
 
