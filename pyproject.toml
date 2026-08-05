@@ -1,0 +1,31 @@
+[project]
+name = "orbitlance-runtime"
+version = "0.1.0"
+description = "Runtime for the Orbitlance AI Agent Framework (v1.0-architecture-freeze)"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "I", "N", "UP", "B", "ARG", "SIM", "RET", "C4"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may use long descriptive literals and import fixtures locally.
+"tests/**" = ["E501"]
+
+[tool.ruff.lint.extend-per-file-ignores]
+# `str, Enum` is deliberate over StrEnum: it keeps the models importable on
+# Python 3.10 and serialises identically. Revisit only if 3.11 becomes the
+# hard floor for every consumer.
+"runtime/models/severity.py" = ["UP042"]
+"runtime/models/validation.py" = ["UP042"]
