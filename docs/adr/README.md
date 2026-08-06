@@ -4,6 +4,9 @@ Decisions affecting the Orbitlance runtime. Records are **never deleted** — a
 superseded decision is retained with a banner so the reasoning behind a reversal
 stays readable.
 
+> **ADR0001 has been superseded by ADR0004. The Architecture Freeze remains
+> unchanged. Re-open only if new architectural evidence invalidates ADR0004.**
+
 **Read the status column before acting on any ADR.**
 
 | ADR | Decision | Status | Owner of next step |
