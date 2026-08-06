@@ -3,9 +3,9 @@
 Tracks issues in `runtime/` — the implementation layer. Distinct from
 `docs/known-issues.md`, which tracks framework architecture issues.
 
-**Status after the Validation Layer stabilization sprint:** V-1, V-2, V-4 and
-V-6 resolved. V-3, V-5, V-7 postponed with ADRs. Four new observations recorded
-below, none blocking.
+**Status:** V-1, V-2, V-4 and V-6 resolved in the stabilization sprint. **V-3
+closed by decision** ([ADR 0004](adr/0004-config-stays-markdown-loader-owns-parsing.md)).
+V-5 and V-7 postponed with ADRs. Four non-blocking observations recorded below.
 
 ---
 
@@ -20,11 +20,34 @@ below, none blocking.
 
 ---
 
+## Closed by decision
+
+### V-3 — Config meaning parsed from human prose by regex
+
+**Closed, not postponed.** See [ADR 0004](adr/0004-config-stays-markdown-loader-owns-parsing.md),
+which supersedes [ADR 0001](adr/0001-config-remains-prose-parsed.md).
+
+`config.md` **remains Markdown**; no machine-readable block is introduced. A
+second Architecture Decision Review found ADR 0001's two premises were false:
+the format is specified by `core/templates/config.md`, and the frozen runtime
+specification already makes the Project Loader the *only* config parser rather
+than a second one.
+
+The concern resolves entirely inside `runtime/` during Task 2: the Loader parses
+`config.md` once and exposes typed fields on `ProjectContext`; the Validation
+Layer deletes its temporary parsing helpers and reads those fields. That is a
+**runtime refactor, not an architecture change** — no frozen file, released tag
+or existing project is affected.
+
+Do not re-open this on the strength of ADR 0001. ADR 0004 states the single
+measurable threshold that would justify revisiting, and it is not met.
+
+---
+
 ## Postponed (see ADRs)
 
 | ID | Issue | ADR | Future owner |
 |---|---|---|---|
-| V-3 | Config meaning parsed from human prose by regex | [ADR 0001](adr/0001-config-remains-prose-parsed.md) | Project Loader (Task 2) |
 | V-5 | Framework constants transcribed rather than Core-derived | [ADR 0002](adr/0002-framework-constants-are-transcribed.md) | Core Loader (Task 3) |
 | V-7 | Rules are shared singletons with unenforced statelessness | [ADR 0003](adr/0003-rules-are-shared-singletons.md) | Validation Layer, before Runtime Engine adds concurrency |
 

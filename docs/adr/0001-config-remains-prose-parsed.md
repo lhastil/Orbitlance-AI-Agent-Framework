@@ -1,8 +1,39 @@
 # ADR 0001 — Config remains prose-parsed for now (V-3)
 
-**Status:** Accepted — implementation postponed
+> ## ⚠ SUPERSEDED — DO NOT ACT ON THIS DOCUMENT
+>
+> **Superseded by:** [ADR 0004 — config.md stays Markdown; the Project Loader is
+> its sole parser](0004-config-stays-markdown-loader-owns-parsing.md)
+>
+> **Superseded on:** 2026-08-06, after a second Architecture Decision Review.
+>
+> **This document reached the wrong conclusion.** It anticipated that the
+> framework might need a machine-readable configuration block (YAML front
+> matter or similar). A second review found the two premises behind that
+> anticipation were both false:
+>
+> 1. It assumed config.md's format was under-specified. It is not —
+>    `core/templates/config.md` specifies the field shape by example, exactly as
+>    Knowledge templates do.
+> 2. It assumed the Project Loader would become a *second* config parser. The
+>    frozen runtime specification already makes the Loader the *only* parser,
+>    with downstream modules consuming typed fields.
+>
+> **The decision is closed: config.md remains Markdown. No framework amendment
+> is required. No migration to YAML or front matter is planned or sanctioned.**
+>
+> This file is retained unmodified below purely as historical record of the
+> reasoning at the time. Read ADR 0004 for the binding decision.
+
+---
+
+**Status:** ~~Accepted — implementation postponed~~ → **Superseded by ADR 0004**
 **Date:** 2026-08-06
 **Relates to:** Principal Engineer Review finding V-3
+
+---
+
+<sub>Original content follows, unaltered.</sub>
 
 ---
 
