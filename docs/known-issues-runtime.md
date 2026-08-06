@@ -53,6 +53,69 @@ measurable threshold that would justify revisiting, and it is not met.
 
 ---
 
+## Open observations (found during the Task 2 Loader self-review)
+
+Recorded, not fixed, per the sprint's no-silent-fixes rule. None blocks Task 3,
+but **L-1 and L-3 concern the shape of `ProjectContext`**, which downstream
+modules are about to depend on — so they are worth deciding before more
+consumers arrive rather than after.
+
+### L-1 — `root_path` is an absolute, environment-dependent path
+
+**Severity: Medium** · Determinism across environments
+
+`FilesystemProjectSource.project_location()` returns a resolved absolute path,
+so `ProjectContext.root_path` is e.g.
+`C:\Users\user\Desktop\Orbitlance-AI-Agent-Framework\projects\sunrise_dental_clinic`.
+
+Two consequences:
+
+1. **Validation output is not reproducible across machines.** Rules compose
+   `file` fields from `root_path`, so the same project validated on two
+   checkouts produces different `ValidationResult` content. The Validation
+   Layer guarantees deterministic ordering *within* an environment; this
+   weakens that guarantee *across* environments, which is where CI diffs live.
+2. **Mixed separators.** Rules compose with `/` while the root uses `\` on
+   Windows, yielding `...\projects\orbitlance/knowledge/01_company.md`.
+
+The fix is a decision, not a patch: should `root_path` be repo-relative
+(reproducible, friendlier in reports) or absolute (unambiguous for I/O)? It is
+a public field of a model about to be depended on, so changing it later is a
+breaking change.
+
+### L-2 — Dead API surface on frozen models
+
+**Severity: Low** · Public API hygiene
+
+Now that Validation reads typed config, several members are used nowhere
+outside their own module: `ProjectDocument.has_section`,
+`ProjectDocument.section_body`, `normalise_section_title`,
+`ProjectConfig.empty`, `ProjectConfig.section`.
+
+They are harmless but they are *public surface on models being frozen* — every
+one is something a future consumer may build on, making it harder to remove
+later. Deciding now whether they are supported API or leftovers is cheaper than
+deciding after something depends on them.
+
+### L-3 — `ProjectDocument.sections` is computed for every document and read by nothing
+
+**Severity: Medium** · Dead computation and a redundant field
+
+The Loader populates `sections` for every document it loads (~10 per project),
+but a repository-wide search finds **zero** readers. Config meaning now flows
+through `config_data`, and the rule that once compared knowledge documents
+against template headings was removed in v1.1 as invented architecture.
+
+So the runtime parses section structure for every project document on every
+load and discards it. Wasted work is the smaller problem; the larger one is
+that `sections` is a field on a model about to be frozen, and it currently has
+no defined consumer — a future module could reasonably assume it is meaningful.
+
+Related to L-2, but recorded separately because the decision differs: L-2 asks
+"is this API supported?", L-3 asks "should the Loader compute this at all?"
+
+---
+
 ## Open observations (found during the stabilization self-review)
 
 Recorded rather than fixed, per the sprint's no-silent-fixes rule. None
