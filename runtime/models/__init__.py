@@ -6,6 +6,7 @@ the frozen spec defines, not something the package layout can enforce.
 """
 
 from runtime.models.core_bundle import CoreBundle
+from runtime.models.project_config import LlmProviderSelection, ProjectConfig
 from runtime.models.project_context import (
     ExtensionPoint,
     ProjectContext,
@@ -25,6 +26,8 @@ from runtime.models.validation import (
 __all__ = [
     "CoreBundle",
     "ExtensionPoint",
+    "LlmProviderSelection",
+    "ProjectConfig",
     "ProjectContext",
     "ProjectDocument",
     "RuleExecution",

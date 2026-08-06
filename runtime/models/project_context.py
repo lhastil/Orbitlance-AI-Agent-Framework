@@ -21,6 +21,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
+from runtime.models.project_config import ProjectConfig
+
 
 def _freeze(mapping: Mapping[str, str] | None) -> Mapping[str, str]:
     return MappingProxyType(dict(mapping or {}))
@@ -88,7 +90,18 @@ class ExtensionPoint:
 
 @dataclass(frozen=True, slots=True)
 class ProjectContext:
-    """Everything the Validation Layer needs to judge one project."""
+    """One project, loaded.
+
+    Produced by the Project Loader; consumed by the Validation Layer, the
+    Resolver, and everything downstream of them.
+
+    `config` is the raw `config.md` document; `config_data` is that same file
+    parsed into typed fields. Downstream modules read `config_data` and should
+    never re-parse `config.raw_text` -- the Loader is the only Markdown parser
+    in the runtime (ADR 0004). `config` is retained because rules legitimately
+    need the document's path and existence for reporting, and because a future
+    consumer may need a section this type does not yet model.
+    """
 
     project_id: str
     root_path: str
@@ -105,6 +118,7 @@ class ProjectContext:
     config: ProjectDocument = field(
         default_factory=lambda: ProjectDocument.missing("config.md", "config.md")
     )
+    config_data: ProjectConfig = field(default_factory=ProjectConfig.empty)
 
     @property
     def extension_points(self) -> tuple[ExtensionPoint, ...]:

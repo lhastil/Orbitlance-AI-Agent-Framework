@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping
 
+from runtime.loader.config_parser import parse_config
 from runtime.models.core_bundle import CoreBundle
 from runtime.models.project_context import (
     ExtensionPoint,
@@ -140,6 +141,7 @@ def make_project(
     config: ProjectDocument | None = None,
     root_exists: bool = True,
 ) -> ProjectContext:
+    config_document = config or document("config.md", VALID_CONFIG)
     return ProjectContext(
         project_id=project_id,
         root_path=f"projects/{project_id}",
@@ -149,7 +151,12 @@ def make_project(
         or extension_point("branding", [document("brand.md", "# Brand\n\nWarm.\n")]),
         integrations=integrations
         or extension_point("integrations", [document("integrations.md", VALID_INTEGRATIONS)]),
-        config=config or document("config.md", VALID_CONFIG),
+        config=config_document,
+        # Typed config comes from the Loader's parser, exactly as it will at
+        # runtime. Hand-building config_data here would let the fixtures drift
+        # from what the Loader actually produces -- and the Loader is now the
+        # only component permitted to parse config.md (ADR 0004).
+        config_data=parse_config(config_document.raw_text),
     )
 
 

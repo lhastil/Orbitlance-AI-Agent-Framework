@@ -8,75 +8,50 @@ Implements the config-facing checks the spec assigns to this layer:
   * that provider is registered in the Provider Registry
   * Operating Constraints are additive only and never relax a Core guardrail
 
-Section resolution is exact (see ConfigSectionIndex). Provider checks are split
-into two rules because they have different collaborator needs: "is a provider
-declared?" is answerable from config.md alone, while "is it registered?" needs
-the Provider Registry. Splitting them means the first still runs, and reports
-honestly, when no registry is available.
+**This module does not parse Markdown.** It reads typed fields from
+`ProjectContext.config_data`, produced once by the Project Loader (ADR 0004).
+Every regex, section index and label extractor that previously lived here has
+been deleted. If a check needs something config.md contains but `ProjectConfig`
+does not expose, extend the Loader -- never parse here.
+
+The division of knowledge is deliberate and is not duplication:
+  * the Loader knows how to *recognise* a heading (parsing vocabulary);
+  * this module knows which sections are *required* and which values are
+    *acceptable* (policy).
+Those are different facts about the framework and live with their owners.
 """
 
 from __future__ import annotations
 
-import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 
-from runtime.models.core_bundle import playbook_key
 from runtime.models.severity import Severity
 from runtime.models.validation import ValidationIssue
 from runtime.validation import codes
 from runtime.validation import framework_spec as spec
 from runtime.validation.rule import Collaborator, ProjectRule, ProjectRuleContext
 
-_LIST_ITEM_RE = re.compile(r"^\s*[-*+]\s+(.*\S)\s*$", re.MULTILINE)
-_CODE_TOKEN_RE = re.compile(r"`([^`]+)`")
-_BOLD_LABEL_RE = re.compile(r"\*\*(.+?)\*\*\s*:?\s*(.*)")
 
+def _is_placeholder(text: str | None) -> bool:
+    """Whether a declared value is really a value.
 
-# --- shared helpers --------------------------------------------------------
-def _is_placeholder(text: str) -> bool:
+    Judging this is validation, not parsing: the Loader reports what the
+    document says, and this layer decides whether that counts.
+    """
+    if text is None:
+        return True
     stripped = text.strip().casefold()
     if not stripped:
         return True
     return any(marker in stripped for marker in spec.PLACEHOLDER_MARKERS)
 
 
-def _strip_markdown(value: str) -> str:
-    return value.replace("*", "").replace("`", "").strip(" .:-\t")
+def _declared_provider(context: ProjectRuleContext) -> str | None:
+    """The declared primary provider, or None if absent or a placeholder."""
+    primary = context.project.config_data.llm_provider.primary
+    return None if _is_placeholder(primary) else primary
 
 
-class ConfigSectionIndex:
-    """Resolves a config document's headings to canonical section names.
-
-    Resolution is an exact lookup through the framework's documented alias
-    table. There is no prefix, substring or fuzzy matching: a heading either is
-    a known spelling of a required section or it is not one at all. That makes
-    the mapping deterministic and auditable -- adding a tolerated spelling is a
-    visible edit to framework_spec.CONFIG_SECTION_ALIASES.
-
-    Built once per rule invocation from the already-parsed section map, so no
-    rule re-scans the document.
-    """
-
-    __slots__ = ("_by_canonical",)
-
-    def __init__(self, sections: Mapping[str, str]) -> None:
-        resolved: dict[str, str] = {}
-        for heading, body in sections.items():
-            canonical = spec.canonical_config_section(heading)
-            # First occurrence wins, so a duplicated heading cannot silently
-            # replace the body an earlier rule already reasoned about.
-            if canonical is not None and canonical not in resolved:
-                resolved[canonical] = body
-        self._by_canonical = resolved
-
-    def declares(self, canonical_section: str) -> bool:
-        return canonical_section in self._by_canonical
-
-    def body(self, canonical_section: str) -> str | None:
-        return self._by_canonical.get(canonical_section)
-
-
-# --- rules -----------------------------------------------------------------
 class ConfigSectionsRule(ProjectRule):
     rule_id = "config.required_sections"
     description = "config.md declares every section the Config template requires."
@@ -86,9 +61,10 @@ class ConfigSectionsRule(ProjectRule):
 
     def evaluate(self, context: ProjectRuleContext) -> Iterable[ValidationIssue]:
         config = context.project.config
-        index = ConfigSectionIndex(config.sections)
+        declared = context.project.config_data.declared_sections
+
         for required in spec.REQUIRED_CONFIG_SECTIONS:
-            if index.declares(required):
+            if required in declared:
                 continue
             yield self.issue(
                 code=codes.CONF_SECTION_MISSING,
@@ -116,12 +92,8 @@ class ConfigPlaybookRule(ProjectRule):
         assert core is not None  # guaranteed by required_collaborators
         config = context.project.config
 
-        body = ConfigSectionIndex(config.sections).body("Active Industry Playbook")
-        if body is None or _is_placeholder(body):
-            return  # selecting no playbook is a valid configuration
-
-        for name in self._named_playbooks(body):
-            if core.has_playbook(name):
+        for name in context.project.config_data.active_playbooks:
+            if _is_placeholder(name) or core.has_playbook(name):
                 continue
             known = ", ".join(sorted(core.playbook_names)) or "none loaded"
             yield self.issue(
@@ -141,44 +113,23 @@ class ConfigPlaybookRule(ProjectRule):
                 ),
             )
 
-    @staticmethod
-    def _named_playbooks(body: str) -> tuple[str, ...]:
-        candidates: list[str] = [
-            token
-            for token in _CODE_TOKEN_RE.findall(body)
-            if "industry_playbooks/" in token
-            or token.strip().casefold().endswith(".md")
-        ]
-        if not candidates:
-            for item in _LIST_ITEM_RE.findall(body):
-                cleaned = _strip_markdown(item)
-                if cleaned and not _is_placeholder(cleaned):
-                    candidates.append(cleaned.split()[0])
-
-        seen: set[str] = set()
-        unique: list[str] = []
-        for candidate in candidates:
-            key = playbook_key(candidate)
-            if key and key not in seen:
-                seen.add(key)
-                unique.append(candidate)
-        return tuple(unique)
-
 
 class ConfigWorkflowsRule(ProjectRule):
     rule_id = "config.workflows_known"
     description = "Enabled workflows are among the canonical six."
 
     def is_applicable(self, context: ProjectRuleContext) -> bool:
-        return context.project.config.exists
+        return (
+            context.project.config.exists
+            and context.project.config_data.declares("Enabled Workflows")
+        )
 
     def evaluate(self, context: ProjectRuleContext) -> Iterable[ValidationIssue]:
         config = context.project.config
-        body = ConfigSectionIndex(config.sections).body("Enabled Workflows")
-        if body is None:
-            return  # missing section already reported by ConfigSectionsRule
+        declared = context.project.config_data.enabled_workflows
 
-        if _is_placeholder(body):
+        meaningful = [w for w in declared if not _is_placeholder(w)]
+        if not meaningful:
             yield self.issue(
                 code=codes.CONF_NO_WORKFLOWS_ENABLED,
                 severity=Severity.WARNING,
@@ -193,19 +144,19 @@ class ConfigWorkflowsRule(ProjectRule):
             )
             return
 
-        for declared in self._declared_workflows(body):
-            if self._resolve(declared) is not None:
+        for workflow in meaningful:
+            if self._resolve(workflow) is not None:
                 continue
             yield self.issue(
                 code=codes.CONF_WORKFLOW_UNKNOWN,
                 severity=Severity.ERROR,
                 message=(
-                    f"config.md enables workflow {declared!r}, which is not one of "
+                    f"config.md enables workflow {workflow!r}, which is not one of "
                     "the six workflows defined in core/workflows/."
                 ),
                 file=config.relative_path,
                 section="Enabled Workflows",
-                field_name=declared,
+                field_name=workflow,
                 recommendation=(
                     "Use one of: "
                     + ", ".join(spec.CANONICAL_WORKFLOWS)
@@ -215,23 +166,12 @@ class ConfigWorkflowsRule(ProjectRule):
             )
 
     @staticmethod
-    def _declared_workflows(body: str) -> tuple[str, ...]:
-        found: list[str] = []
-        for item in _LIST_ITEM_RE.findall(body):
-            text = item.strip()
-            match = _BOLD_LABEL_RE.match(text)
-            label = (
-                match.group(1)
-                if match
-                else re.split(r"—|--| - ", text, maxsplit=1)[0]
-            )
-            cleaned = _strip_markdown(label)
-            if cleaned and not cleaned.casefold().startswith("not enabled"):
-                found.append(cleaned)
-        return tuple(found)
-
-    @staticmethod
     def _resolve(declared: str) -> str | None:
+        """Resolve a declared label to a canonical workflow id, or None.
+
+        Resolution lives here rather than in the Loader because it requires the
+        framework's canonical workflow list -- policy knowledge, not parsing.
+        """
         key = declared.strip().casefold().replace("-", " ")
         if key in spec.WORKFLOW_ALIASES:
             return spec.WORKFLOW_ALIASES[key]
@@ -239,40 +179,20 @@ class ConfigWorkflowsRule(ProjectRule):
         return underscored if underscored in spec.CANONICAL_WORKFLOWS else None
 
 
-def _declared_primary_provider(config_sections: Mapping[str, str]) -> str | None:
-    """Extract the declared primary provider, or None if absent/placeholder.
-
-    Shared by the two provider rules so the extraction lives in exactly one
-    place; a change to how the field is written cannot make the two rules
-    disagree about what was declared.
-    """
-    body = ConfigSectionIndex(config_sections).body("LLM Provider")
-    if body is None:
-        return None
-    for item in _LIST_ITEM_RE.findall(body):
-        match = _BOLD_LABEL_RE.match(item.strip())
-        if not match:
-            continue
-        if _strip_markdown(match.group(1)).casefold().startswith("primary"):
-            value = _strip_markdown(match.group(2))
-            return None if _is_placeholder(value) else value
-    return None
-
-
 class ConfigProviderDeclaredRule(ProjectRule):
-    """Answerable from config.md alone -- needs no collaborator."""
+    """Answerable from the loaded config alone -- needs no collaborator."""
 
     rule_id = "config.llm_provider_declared"
     description = "A primary LLM provider is declared and is not a placeholder."
 
     def is_applicable(self, context: ProjectRuleContext) -> bool:
-        return context.project.config.exists and ConfigSectionIndex(
-            context.project.config.sections
-        ).declares("LLM Provider")
+        return (
+            context.project.config.exists
+            and context.project.config_data.declares("LLM Provider")
+        )
 
     def evaluate(self, context: ProjectRuleContext) -> Iterable[ValidationIssue]:
-        config = context.project.config
-        if _declared_primary_provider(config.sections) is not None:
+        if _declared_provider(context) is not None:
             return
         yield self.issue(
             code=codes.CONF_PROVIDER_NOT_DECLARED,
@@ -281,7 +201,7 @@ class ConfigProviderDeclaredRule(ProjectRule):
                 "config.md does not declare a primary LLM provider (the field is "
                 "absent or still a placeholder)."
             ),
-            file=config.relative_path,
+            file=context.project.config.relative_path,
             section="LLM Provider",
             field_name="Primary",
             recommendation=(
@@ -308,14 +228,13 @@ class ConfigProviderRegisteredRule(ProjectRule):
             return False
         # Nothing to resolve if no provider was declared; that is
         # ConfigProviderDeclaredRule's finding, not a second report here.
-        return _declared_primary_provider(context.project.config.sections) is not None
+        return _declared_provider(context) is not None
 
     def evaluate(self, context: ProjectRuleContext) -> Iterable[ValidationIssue]:
         registry = context.provider_registry
         assert registry is not None  # guaranteed by required_collaborators
-        config = context.project.config
 
-        primary = _declared_primary_provider(config.sections)
+        primary = _declared_provider(context)
         assert primary is not None  # guaranteed by is_applicable
 
         if registry.is_registered(primary):
@@ -329,7 +248,7 @@ class ConfigProviderRegisteredRule(ProjectRule):
                 f"Declared LLM provider {primary!r} is not registered in the "
                 "Provider Registry."
             ),
-            file=config.relative_path,
+            file=context.project.config.relative_path,
             section="LLM Provider",
             field_name=primary,
             recommendation=(
@@ -347,12 +266,11 @@ class ConfigOperatingConstraintsRule(ProjectRule):
         return context.project.config.exists
 
     def evaluate(self, context: ProjectRuleContext) -> Iterable[ValidationIssue]:
-        config = context.project.config
-        body = ConfigSectionIndex(config.sections).body("Operating Constraints")
-        if body is None or _is_placeholder(body):
+        constraints = context.project.config_data.operating_constraints
+        if _is_placeholder(constraints):
             return  # empty constraints are explicitly valid
 
-        haystack = body.casefold()
+        haystack = constraints.casefold()
         for phrase in spec.RELAXING_PHRASES:
             if phrase not in haystack:
                 continue
@@ -363,7 +281,7 @@ class ConfigOperatingConstraintsRule(ProjectRule):
                     "An Operating Constraint appears to relax or override a Core "
                     f"guardrail (matched phrase: {phrase!r})."
                 ),
-                file=config.relative_path,
+                file=context.project.config.relative_path,
                 section="Operating Constraints",
                 field_name=phrase,
                 recommendation=(
