@@ -5,7 +5,12 @@ Tracks issues in `runtime/` — the implementation layer. Distinct from
 
 **Status:** V-1, V-2, V-4 and V-6 resolved in the stabilization sprint. **V-3
 closed by decision** ([ADR 0004](adr/0004-config-stays-markdown-loader-owns-parsing.md)).
-V-5 and V-7 postponed with ADRs. Four non-blocking observations recorded below.
+V-5 and V-7 postponed with ADRs.
+
+**Open observations: L-1…L-3 (Project Loader) and R-1…R-4 (Validation Layer).
+All non-blocking.** No open observation requires amending a frozen model or
+rewriting a downstream module. Confidence in `ProjectContext` as a permanent
+dependency is **≥95%** — see the assessment below the Task 2 heading.
 
 ---
 
@@ -55,33 +60,78 @@ measurable threshold that would justify revisiting, and it is not met.
 
 ## Open observations (found during the Task 2 Loader self-review)
 
-Recorded, not fixed, per the sprint's no-silent-fixes rule. None blocks Task 3,
-but **L-1 and L-3 concern the shape of `ProjectContext`**, which downstream
-modules are about to depend on — so they are worth deciding before more
-consumers arrive rather than after.
+Recorded, not fixed, per the sprint's no-silent-fixes rule.
+
+> **Reassessed 2026-08-06.** These were first recorded with a warning that L-1
+> and L-3 concerned the shape of `ProjectContext` and might force downstream
+> redesign. A follow-up review tested that claim against the frozen
+> specification and it did not hold. Both are reclassified below, and the
+> confidence statement they qualified is corrected.
+>
+> **None of these is an architectural blocker. `ProjectContext` is stable as
+> frozen, and Task 3 can proceed without amending it.**
+
+### Confidence in `ProjectContext` as a permanent dependency: **≥95%**
+
+The earlier figure of ~85% was based on L-1 and L-3 being unresolved questions
+about the type. Two pieces of evidence from the frozen architecture remove that
+doubt:
+
+1. **No downstream module may touch the filesystem.** Exactly two modules
+   declare filesystem access in their External Dependencies rows — Core Loader
+   (`core/`) and Project Loader (`projects/<client>/`). Every other module
+   consumes `ResolvedContext`, whose fields are content, not paths. So no
+   downstream module can consume `root_path` as a path, and L-1 cannot
+   propagate beyond report text. Confirmed in the current runtime: all
+   filesystem I/O is confined to `runtime/loader/sources.py`.
+2. **`sections` already has a named future consumer.** Token Budget Manager's
+   responsibility is to "select which Knowledge sections to include", and its
+   non-responsibilities restrict it to selecting or omitting "whole sections".
+   That is precisely the decomposition the Loader produces.
+
+Neither issue can force a downstream module to be rewritten.
 
 ### L-1 — `root_path` is an absolute, environment-dependent path
 
-**Severity: Medium** · Determinism across environments
+**Severity: Low** · Reporting quality · **Non-blocking**
+
+*Reclassified from Medium. Originally recorded as a determinism risk that might
+constitute a breaking change to `ProjectContext`; it is neither.*
 
 `FilesystemProjectSource.project_location()` returns a resolved absolute path,
 so `ProjectContext.root_path` is e.g.
 `C:\Users\user\Desktop\Orbitlance-AI-Agent-Framework\projects\sunrise_dental_clinic`.
 
-Two consequences:
+Two visible consequences, both confined to report text:
 
-1. **Validation output is not reproducible across machines.** Rules compose
-   `file` fields from `root_path`, so the same project validated on two
-   checkouts produces different `ValidationResult` content. The Validation
-   Layer guarantees deterministic ordering *within* an environment; this
-   weakens that guarantee *across* environments, which is where CI diffs live.
+1. **Report text differs per checkout.** Rules compose `file` fields from
+   `root_path`, so the same project validated on two machines produces
+   different `ValidationIssue.file` strings. Ordering determinism within an
+   environment is unaffected; only the rendered path differs.
 2. **Mixed separators.** Rules compose with `/` while the root uses `\` on
    Windows, yielding `...\projects\orbitlance/knowledge/01_company.md`.
 
-The fix is a decision, not a patch: should `root_path` be repo-relative
-(reproducible, friendlier in reports) or absolute (unambiguous for I/O)? It is
-a public field of a model about to be depended on, so changing it later is a
-breaking change.
+**Why this cannot force a rewrite.** Every consumer of `root_path` composes a
+display string; none performs path arithmetic, resolution or I/O:
+
+```
+runtime/validation/rules/structure.py:103        file=f"{root_path}/{dir}"
+runtime/validation/rules/knowledge.py:41         base = f"{root_path}/{KNOWLEDGE_DIR}"
+runtime/validation/rules/extension_points.py:35  file=f"{root_path}/{BRANDING_DIR}"
+```
+
+Changing the value's format would not change the field's type (`str`), its
+presence on the model, or any function signature. A consumer could only break
+if it assumed absoluteness and performed I/O with it — and the frozen
+architecture grants filesystem access to the two Loaders only, so such a
+consumer cannot exist by construction.
+
+**Why documented rather than fixed.** The choice between repo-relative
+(reproducible, better for CI diffs) and absolute (unambiguous for operators)
+depends on how validation output is actually consumed. The Runtime Engine and
+Observability modules are those consumers and neither exists yet. Deciding now
+means deciding without the requirement, and amending a just-frozen model on
+speculation costs more stability than the issue costs in noise.
 
 ### L-2 — Dead API surface on frozen models
 
@@ -97,22 +147,49 @@ one is something a future consumer may build on, making it harder to remove
 later. Deciding now whether they are supported API or leftovers is cheaper than
 deciding after something depends on them.
 
-### L-3 — `ProjectDocument.sections` is computed for every document and read by nothing
+**Note after the L-3 reclassification:** `has_section` and `section_body` are
+accessors for `ProjectDocument.sections`, which L-3 establishes is provisioned
+for the Token Budget Manager. Those two are therefore better read as *unused
+accessors for a provisioned field* than as leftovers, and should not be removed
+on the strength of "nothing calls them today". The remaining three
+(`normalise_section_title`, `ProjectConfig.empty`, `ProjectConfig.section`) have
+no named future consumer and remain genuinely open. Non-blocking either way.
 
-**Severity: Medium** · Dead computation and a redundant field
+### L-3 — `ProjectDocument.sections` is provisioned for a future consumer
 
-The Loader populates `sections` for every document it loads (~10 per project),
-but a repository-wide search finds **zero** readers. Config meaning now flows
-through `config_data`, and the rule that once compared knowledge documents
+**Severity: Low** · Unread-yet, not dead · **Non-blocking**
+
+*Reclassified from Medium. Originally recorded as "dead computation and a
+redundant field" on the grounds that nothing reads it. The first half of that
+claim is true; the conclusion drawn from it was wrong.*
+
+The Loader populates `sections` for every document it loads, and a
+repository-wide search finds **zero** current readers — config meaning now
+flows through `config_data`, and the rule that compared knowledge documents
 against template headings was removed in v1.1 as invented architecture.
 
-So the runtime parses section structure for every project document on every
-load and discards it. Wasted work is the smaller problem; the larger one is
-that `sections` is a field on a model about to be frozen, and it currently has
-no defined consumer — a future module could reasonably assume it is meaningful.
+**But the frozen specification names its consumer.** Token Budget Manager:
 
-Related to L-2, but recorded separately because the decision differs: L-2 asks
-"is this API supported?", L-3 asks "should the Loader compute this at all?"
+> **Responsibilities:** …select which Knowledge *sections* to include (Phase 1:
+> all of them; later: retrieval-based).
+>
+> **Non-responsibilities:** Never edit, paraphrase, or summarize Knowledge
+> content — only selects/omits **whole sections**.
+
+A module whose defined job is selecting and omitting whole Knowledge sections
+requires exactly the decomposition the Loader already produces. `sections` is
+therefore **provisioned ahead of its consumer**, not dead.
+
+**Why documented rather than fixed.** Removing the field would delete the data
+structure a specified future module needs, and it would have to be
+reintroduced — the precise rewrite this review exists to prevent. The only
+residual cost is parsing sections before anything reads them, which at
+deploy-time validation of a handful of documents per project is negligible
+against the filesystem I/O in the same operation.
+
+Related to L-2, but the decisions differ: L-2 asks "is this accessor supported
+API?", L-3 asked "should the Loader compute this at all?" — and the answer to
+L-3 is now settled: yes.
 
 ---
 
