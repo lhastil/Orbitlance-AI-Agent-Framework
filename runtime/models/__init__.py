@@ -12,6 +12,13 @@ from runtime.models.project_context import (
     ProjectContext,
     ProjectDocument,
 )
+from runtime.models.resolved_context import (
+    ExtensionPointName,
+    ResolutionAction,
+    ResolutionDecision,
+    ResolvedConfig,
+    ResolvedContext,
+)
 from runtime.models.severity import Severity
 from runtime.models.validation import (
     RuleExecution,
@@ -26,10 +33,15 @@ from runtime.models.validation import (
 __all__ = [
     "CoreBundle",
     "ExtensionPoint",
+    "ExtensionPointName",
     "LlmProviderSelection",
     "ProjectConfig",
     "ProjectContext",
     "ProjectDocument",
+    "ResolutionAction",
+    "ResolutionDecision",
+    "ResolvedConfig",
+    "ResolvedContext",
     "RuleExecution",
     "RuleOutcome",
     "Severity",
