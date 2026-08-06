@@ -7,10 +7,43 @@ Tracks issues in `runtime/` — the implementation layer. Distinct from
 closed by decision** ([ADR 0004](adr/0004-config-stays-markdown-loader-owns-parsing.md)).
 V-5 and V-7 postponed with ADRs.
 
-**Open observations: L-1…L-3 (Project Loader) and R-1…R-4 (Validation Layer).
-All non-blocking.** No open observation requires amending a frozen model or
-rewriting a downstream module. Confidence in `ProjectContext` as a permanent
-dependency is **≥95%** — see the assessment below the Task 2 heading.
+**No issue in this register is Blocking.** No open item requires amending a
+frozen model, breaking a published signature, or rewriting a downstream module.
+Confidence in `ProjectContext` as a permanent dependency is **≥95%** — see the
+assessment below the Task 2 heading.
+
+---
+
+## Classification
+
+Assigned at the Module 2 release gate (2026-08-07). Every issue carries exactly
+one class.
+
+| Class | Meaning | Blocks a freeze? |
+|---|---|---|
+| **Blocking** | Freezing forces a later redesign: a breaking signature change, an amended frozen model, or a rewritten downstream module. | **Yes** |
+| **Additive Extension** | A new field, method or type will be added later. Nothing existing changes shape. | No |
+| **Runtime Improvement** | Internal quality, precision or hygiene. Invisible across the module boundary. | No |
+| **Closed** | Resolved, or settled by decision. Retained for decision history. | No |
+
+| ID | Title | Class |
+|---|---|---|
+| V-1 | Fail-open default provider validation | Closed |
+| V-2 | `valid` conflated "passed" with "never checked" | Closed |
+| V-3 | Config meaning parsed from prose | Closed (ADR 0004) |
+| V-4 | Prefix section matching | Closed |
+| V-5 | Framework constants transcribed, not Core-derived | Runtime Improvement (ADR 0002) |
+| V-6 | `is_authoritative` out-of-band contract | Closed |
+| V-7 | Rules are shared singletons | Runtime Improvement (ADR 0003) |
+| L-1 | `root_path` is absolute and environment-dependent | Runtime Improvement |
+| L-2 | Unused public surface on frozen models | Runtime Improvement (partly Closed) |
+| L-3 | `ProjectDocument.sections` has no current reader | Closed |
+| **L-4** | **Integrations exposed untyped; Resolver needs per-contract state** | **Additive Extension** |
+| **L-5** | **`ProjectSource` exposes no change-detection signal** | **Additive Extension** |
+| R-1 | Coverage loss over-reported | Runtime Improvement |
+| R-2 | Collaborators injected asymmetrically | Runtime Improvement |
+| R-3 | `ConfigSectionIndex` rebuilt per rule | Runtime Improvement |
+| R-4 | `ValidationResult.valid` changed meaning | Closed |
 
 ---
 
@@ -155,6 +188,12 @@ on the strength of "nothing calls them today". The remaining three
 (`normalise_section_title`, `ProjectConfig.empty`, `ProjectConfig.section`) have
 no named future consumer and remain genuinely open. Non-blocking either way.
 
+**Class: Runtime Improvement**, partly **Closed** — `has_section` and
+`section_body` are settled by L-3 and are no longer open questions. The
+remaining three are hygiene: leaving them costs unused surface, and removing
+them later is a deletion from a model no external consumer has yet built on.
+Neither direction forces a redesign.
+
 ### L-3 — `ProjectDocument.sections` is provisioned for a future consumer
 
 **Severity: Low** · Unread-yet, not dead · **Non-blocking**
@@ -189,7 +228,72 @@ against the filesystem I/O in the same operation.
 
 Related to L-2, but the decisions differ: L-2 asks "is this accessor supported
 API?", L-3 asked "should the Loader compute this at all?" — and the answer to
-L-3 is now settled: yes.
+L-3 is now settled: yes. **Class: Closed.**
+
+---
+
+## Found at the Module 2 release gate (2026-08-07)
+
+Both are **Additive Extension**. Neither changes an existing field, signature or
+model shape, so neither blocks the freeze.
+
+### L-4 — Integrations are exposed untyped, but the Resolver needs per-contract state
+
+**Class: Additive Extension** · **Non-blocking**
+
+`ResolvedContext` must carry `degraded_capabilities`, and the frozen resolution
+rule for Integrations is *per-contract*, not all-or-nothing:
+
+> **Integrations** — "Degrade **the affected** capability."
+
+So the Resolver must determine which of the five `core/tools/` contracts have a
+provider configured. `ProjectContext` exposes `config_data` as typed
+(`ProjectConfig`) but `integrations` only as raw `ProjectDocument`s. The only
+mechanism in the runtime today is substring search over concatenated raw text
+(`runtime/validation/rules/extension_points.py`, `IntegrationsCoverageRule._mentions`).
+
+When the Resolver is built it will have three options:
+
+| Option | Verdict |
+|---|---|
+| Re-implement the substring interpretation in the Resolver | **Invalid** — the duplication class [ADR 0004](adr/0004-config-stays-markdown-loader-owns-parsing.md) forbids; `rules/config.py` already states "extend the Loader — never parse here" |
+| Depend on the Validation Layer | **Invalid** — inverts the frozen dependency direction; Validation reads Loader output, never the reverse |
+| **Loader exposes typed integrations** | **Correct** — and additive |
+
+**Why this is not blocking.** The correct option adds a field to
+`ProjectContext`. `config_data` was added the same way during Task 2 without
+altering a single existing consumer, so the additive path is demonstrated, not
+assumed. No published signature changes, no frozen model is amended, and no
+downstream module is rewritten.
+
+**Why not built now.** Building typed integrations before the Resolver exists
+means guessing its requirements — the exact error [ADR 0001](adr/0001-config-remains-prose-parsed.md)
+made once and ADR 0004 had to reverse. The Resolver is the module that knows
+what shape it needs; it should specify it.
+
+**Owner:** Resolver (Runtime Module 4).
+
+### L-5 — `ProjectSource` exposes no change-detection signal
+
+**Class: Additive Extension** · **Non-blocking**
+
+The specification's Loader responsibility reads "cache per project; invalidate
+on **detected change**". The current design delegates that policy to the
+injected `ProjectCache`, but a cache can only detect change through the data it
+is given, and `ProjectSource` exposes no mtime, hash, version or etag — its
+surface is `project_exists`, `project_location`, `directory_exists`,
+`list_documents`, `document_exists`, `read_document`.
+
+**Why this is not blocking.** A change-detecting cache for the filesystem case
+can `stat()` directly: the cache lives in `runtime/loader/`, and the Project
+Loader is one of only two modules the frozen architecture grants filesystem
+access, so this violates nothing. The Protocol only needs extending for a
+source that is *not* the filesystem — the spec's own future extension point,
+which does not exist yet. At that point there is exactly one implementer
+(`FilesystemProjectSource`) to update, and the capability can be introduced as a
+separate optional Protocol rather than a breaking edit to this one.
+
+**Owner:** whoever introduces the second `ProjectSource` implementation.
 
 ---
 
@@ -256,13 +360,16 @@ shared-state hazard ADR 0003 exists to avoid. Not worth it for this saving.
 
 ### R-4 — `ValidationResult.valid` changed meaning
 
-**Severity: Low** · Migration note, not a defect
+**Class: Closed** · Migration note, not a defect
 
 `valid` is now conjunctive (no blocking issues **and** complete coverage).
 Callers wanting the older, narrower question must use `has_blocking_issues`.
 
-No consumer exists yet — the Project Loader has not been written — so nothing
-breaks. Recorded so the change is explicit rather than discovered later.
+**Closed 2026-08-07.** This entry was recorded while the Project Loader did not
+yet exist, and it was left open pending that module. The Loader is now
+feature-complete and does not consume `ValidationResult` at all — it performs no
+validation, by design. The migration therefore completed with zero affected
+consumers, and the concern the entry was holding open no longer exists.
 
 ---
 
