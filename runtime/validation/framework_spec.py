@@ -57,16 +57,26 @@ CANONICAL_WORKFLOWS: Final[tuple[str, ...]] = (
     "voice_agent",
 )
 
-# Accepted human spellings seen in config files, mapped to canonical ids.
+# Accepted human spellings, mapped to canonical ids.
+#
+# Source of truth: core/templates/config.md — "The six available workflows are:
+# Discovery, Recommendation, Consultation, CRM Sync, Follow-up, Voice Agent."
+# This table may only contain spellings that template sanctions.
+#
+# R3-1: it previously also accepted "Consultation Request", "CRM
+# Synchronization" and "CRM Synchronisation". The template sanctions none of
+# the three, and the Resolver — which derives its vocabulary from
+# core/workflows/ rather than transcribing it — never resolved them. A project
+# using one therefore passed validation and then lost that workflow at
+# resolution. The three were removed rather than added to the Resolver, because
+# the frozen template is authoritative and this table is the transcription that
+# had drifted from it.
 WORKFLOW_ALIASES: Final[dict[str, str]] = {
     "discovery": "discovery",
     "recommendation": "recommendation",
     "consultation": "consultation",
-    "consultation request": "consultation",
     "crm sync": "crm_sync",
     "crm_sync": "crm_sync",
-    "crm synchronization": "crm_sync",
-    "crm synchronisation": "crm_sync",
     "follow up": "follow_up",
     "follow-up": "follow_up",
     "follow_up": "follow_up",

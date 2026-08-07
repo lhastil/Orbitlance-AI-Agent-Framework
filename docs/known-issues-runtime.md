@@ -24,6 +24,7 @@ one class.
 | **Blocking** | Freezing forces a later redesign: a breaking signature change, an amended frozen model, or a rewritten downstream module. | **Yes** |
 | **Additive Extension** | A new field, method or type will be added later. Nothing existing changes shape. | No |
 | **Runtime Improvement** | Internal quality, precision or hygiene. Invisible across the module boundary. | No |
+| **Documentation / Reporting** | The behaviour is correct and tested; what is open is that a future module must *know* it. Nothing to build. | No |
 | **Closed** | Resolved, or settled by decision. Retained for decision history. | No |
 
 | ID | Title | Class |
@@ -38,12 +39,16 @@ one class.
 | L-1 | `root_path` is absolute and environment-dependent | Runtime Improvement |
 | L-2 | Unused public surface on frozen models | Runtime Improvement (partly Closed) |
 | L-3 | `ProjectDocument.sections` has no current reader | Closed |
-| **L-4** | **Integrations exposed untyped; Resolver needs per-contract state** | **Additive Extension** |
+| **L-4** | **Integrations exposed untyped; per-contract state deferred to the Tool Executor** | **Additive Extension** |
 | **L-5** | **`ProjectSource` exposes no change-detection signal** | **Additive Extension** |
 | R-1 | Coverage loss over-reported | Runtime Improvement |
 | R-2 | Collaborators injected asymmetrically | Runtime Improvement |
 | R-3 | `ConfigSectionIndex` rebuilt per rule | Runtime Improvement |
 | R-4 | `ValidationResult.valid` changed meaning | Closed |
+| **R3-1** | **Validation accepted three workflow spellings the Resolver drops** | **Closed** |
+| **R3-2** | **`ResolvedContext` caching ownership unassigned** | **Documentation / Reporting** |
+| **R3-3** | **Missing Branding resolves to an empty overlay** | **Documentation / Reporting** |
+| **R3-4** | **`ResolvedContext` has no consumer yet** | **Additive Extension** |
 
 ---
 
@@ -271,7 +276,32 @@ means guessing its requirements — the exact error [ADR 0001](adr/0001-config-r
 made once and ADR 0004 had to reverse. The Resolver is the module that knows
 what shape it needs; it should specify it.
 
-**Owner:** Resolver (Runtime Module 4).
+**Owner:** Tool Executor.
+
+> **Evidence added 2026-08-07, after Runtime Module 3 was implemented.**
+>
+> **The Resolver was built without requiring typed integration data, so L-4
+> remains an Additive Extension rather than a blocker.** This is now measured,
+> not predicted.
+>
+> This entry originally named the Resolver as owner, on the assumption that
+> computing `degraded_capabilities` would force it to interpret `integrations/`
+> document text. That assumption was wrong on two counts:
+>
+> 1. **The spec assigns per-tool provider resolution elsewhere.** Tool Executor
+>    responsibility 2: *"resolve the project's configured concrete provider from
+>    `ResolvedContext.integrations`."* Deciding which individual tool has a
+>    configured provider is that module's job, not the Resolver's.
+> 2. **The granularity the Resolver actually needs is derivable from Core.** The
+>    Resolver's test scenario (c) requires a per-tool capability-disabled state
+>    when Integrations is *missing*, and the capability set comes from
+>    `core/tools/` via `CoreBundle`. No document text is read.
+>
+> The Resolver therefore degrades every Core capability when Integrations is
+> absent, and claims no degradation when it is present — leaving per-tool
+> resolution to its documented owner. Typed integration data, if it is ever
+> wanted, should be specified by the Tool Executor, which is the module that
+> knows what shape it needs.
 
 ### L-5 — `ProjectSource` exposes no change-detection signal
 
@@ -294,6 +324,120 @@ which does not exist yet. At that point there is exactly one implementer
 separate optional Protocol rather than a breaking edit to this one.
 
 **Owner:** whoever introduces the second `ProjectSource` implementation.
+
+---
+
+## Found during Runtime Module 3 (Resolver), 2026-08-07
+
+### R3-1 — Validation accepted three workflow spellings the Resolver drops
+
+**Class: Closed** (recorded as Runtime Improvement; resolved the same day)
+
+**Evidence, reproduced by executing both modules against the same labels:**
+
+| Declared label | Validation Layer | Resolver |
+|---|---|---|
+| `Consultation Request` | accepted → `consultation` | unresolved, dropped |
+| `CRM Synchronization` | accepted → `crm_sync` | unresolved, dropped |
+| `CRM Synchronisation` | accepted → `crm_sync` | unresolved, dropped |
+
+A project declaring any of the three passed validation and then lost that
+workflow from `ResolvedConfig.enabled_workflows`. The loss was recorded as a
+`DECLARATION_UNRESOLVED` entry in `fallback_log`, so it was never silent — but
+the two modules genuinely disagreed about the same input.
+
+**The divergence was in Validation, not the Resolver.**
+`core/templates/config.md` states: *"The six available workflows are: Discovery,
+Recommendation, Consultation, CRM Sync, Follow-up, Voice Agent."* It sanctions
+none of the three. The Resolver derives its vocabulary from `core/workflows/`
+via `CoreBundle` and transcribes nothing, so it followed the frozen template
+exactly. `WORKFLOW_ALIASES` is a *transcription* of that template, and the
+transcription had drifted — the same class of problem [ADR 0002](adr/0002-framework-constants-are-transcribed.md)
+records for V-5.
+
+**This was a runtime consistency issue, not an architecture issue.** No frozen
+document was wrong, no model changed shape, and no public interface moved.
+
+**Resolution.** The three unsupported aliases were removed from
+`runtime/validation/framework_spec.py`. Nothing was added to the Resolver: the
+frozen template is authoritative, and broadening the Resolver to match a drifted
+transcription would have inverted that authority.
+
+Measured before changing anything:
+
+- Exactly those three entries were load-bearing. The other ten aliases are
+  redundant with `ConfigWorkflowsRule._resolve`'s underscore fallback, so
+  removing three entries is the smallest change that closes the gap.
+- **No existing project is affected.** Neither `orbitlance` nor
+  `sunrise_dental_clinic` declares any of the three; sunrise's only occurrence
+  of the phrase "Consultation Request" is prose *inside* a `**Consultation**`
+  bullet, and its parsed declarations are the six template spellings.
+- End-to-end validation output is unchanged: core `VALID`; orbitlance 9 errors
+  + 2 warnings; sunrise 1 error.
+
+`tests/test_vocabulary_alignment.py` now asserts the property that was violated:
+everything Validation accepts, the Resolver must also resolve — checked
+exhaustively over the alias table, so the two can never drift apart again
+without a test failing.
+
+### R3-2 — `ResolvedContext` caching ownership is unassigned
+
+**Class: Documentation / Reporting** · **Non-blocking**
+
+The frozen data-model row says `ResolvedContext` is *"Created per project by
+Resolver, typically once per activation/deploy, cached; recomputed on underlying
+change."* But the Resolver's own module rows assign it no caching duty:
+responsibility 2 covers only per-extension-point decisions and recording them,
+and external dependencies are *"None (pure in-memory transformation)."*
+
+Contrast the Project Loader, whose responsibility 2 says explicitly *"cache per
+project; invalidate on detected change"*. That module was given the duty; this
+one was not.
+
+**No caching owner has been invented.** The Resolver is implemented as the pure
+function the spec describes — no cache, no collaborator, no hidden state. A pure
+function may be cached by any caller, so nothing is lost by leaving this open.
+
+Recorded as an ownership clarification for whoever implements the Runtime Engine
+or the first `ResolvedContext` consumer. That module should claim the duty
+deliberately rather than discover the gap.
+
+### R3-3 — Missing Branding resolves to an empty overlay
+
+**Class: Documentation / Reporting** · **Non-blocking**
+
+`docs/project-configuration.md` says missing Branding should *"Fall back to
+Core's neutral default voice"*, because *"Core Personality already defines a
+complete, safe behavioral contract."*
+
+The Prompt Assembler's order emits **Core Personality in its own slot**, and
+Branding later as an **overlay**. Copying Core Personality into the overlay slot
+would therefore emit the same text twice in a single prompt.
+
+The Resolver returns an **empty overlay** and records a
+`CORE_DEFAULT_APPLIED` decision naming the reason. Both frozen statements hold:
+the voice is Core's, and it is delivered exactly once.
+
+Implemented and covered by tests. Recorded here because the **Prompt Assembler
+must know this contract** — an empty `ResolvedContext.branding` means "Core's
+default voice applies", never "branding data is missing and must be sourced".
+
+### R3-4 — `ResolvedContext` has no consumer yet
+
+**Class: Additive Extension** · **Non-blocking**
+
+`ResolvedContext` is written solely by the Resolver. Its future readers —
+Prompt Assembler, Token Budget Manager, Guardrail Engine, Tool Executor and
+Provider Registry — do not exist, so the type has been designed against the
+frozen specification rather than against an observed consumer.
+
+This is the same condition `ProjectContext` was in before the Project Loader
+was built, and it resolved additively: `config_data` was added during Task 2
+without altering a single existing consumer.
+
+**Do not pre-build speculative fields.** A consumer that needs something absent
+should specify it, exactly as the Resolver specified nothing until the frozen
+spec required it. Any such addition is expected to be additive, not a redesign.
 
 ---
 
