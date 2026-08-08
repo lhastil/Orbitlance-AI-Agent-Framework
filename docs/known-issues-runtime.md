@@ -12,12 +12,12 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**One open ARCHITECTURE ISSUE: [PA-3](#pa-3--core-prompts06_lead_qualificationmd-has-no-delivery-path-to-the-model).**
-It is the only entry that cannot be closed without a decision from the system
-owner, because either resolution amends a frozen document. It does not block
-building Runtime Module 4 against the specification as written; it blocks
-*freezing* Module 4, because freezing the assembly order as written would settle
-the question by default rather than by decision.
+**No open Architecture Issue.** PA-3 was recorded as one on 2026-08-09 and
+**reclassified to Documentation / Reporting on 2026-08-09** after a final
+evidence review found its behavioural premise unsupported. The system owner
+decided Interpretation B: `core/prompts/06_lead_qualification.md` is **not**
+assembled into the runtime `PromptBundle`. The Architecture Freeze was not
+amended.
 
 ---
 
@@ -57,7 +57,7 @@ one class.
 | **R3-2** | **`ResolvedContext` caching ownership unassigned** | **Documentation / Reporting** |
 | **R3-3** | **Missing Branding resolves to an empty overlay** | **Documentation / Reporting** |
 | **R3-4** | **`ResolvedContext` has no consumer yet** | **Additive Extension** |
-| **PA-3** | **`core/prompts/06_lead_qualification.md` has no delivery path to the model** | **ARCHITECTURE ISSUE — open, owner decision required** |
+| **PA-3** | **`06_lead_qualification.md` is not assembled; its behaviour is delivered distributively** | **Documentation / Reporting** (was: Architecture Issue) |
 | **PA-4** | **§4 cites an assembly order in a section that does not exist** | **Documentation / Reporting** |
 
 ---
@@ -456,10 +456,30 @@ spec required it. Any such addition is expected to be additive, not a redesign.
 No code was written and no frozen document was modified. Module 4 is **not**
 implemented.
 
-### PA-3 — `core/prompts/06_lead_qualification.md` has no delivery path to the model
+### PA-3 — `06_lead_qualification.md` is not assembled; its behaviour is delivered distributively
 
-**Class: ARCHITECTURE ISSUE** · **Open** · **Architectural decision required from
-the system owner**
+**Class: Documentation / Reporting** · **Decided** · Reclassified 2026-08-09
+from ARCHITECTURE ISSUE
+
+> **Decision — Interpretation B.** The system owner decided that
+> `core/prompts/06_lead_qualification.md` is **not** assembled into the runtime
+> `PromptBundle`. Runtime Module 4 implements `runtime-specification.md` §4's
+> nine slots verbatim and adds no slot for it. **The Architecture Freeze was not
+> amended.**
+>
+> `06` remains **validator-required** (`REQUIRED_PROMPTS` lists all ten). It is
+> authoritative design and authoring documentation describing a cross-cutting
+> judgment the framework implements *distributively* rather than as one injected
+> block.
+>
+> **Optional, deferred, non-blocking:** `docs/architecture.md:123` says the
+> judgment is one "the agent applies", which reads as implying injection.
+> Clarifying that it describes distributed implementation is documentation debt
+> with no runtime consequence. It is deliberately **not** done here, because it
+> would modify a frozen document.
+
+The record below is preserved because it contains three corrections to earlier
+analysis that a future reader should not have to rediscover.
 
 #### What each frozen document says
 
@@ -527,28 +547,75 @@ closes the issue without touching the Architecture Freeze.
 `07_consultation_request.md` are also absent from the assembly order, but each
 has a workflow counterpart carrying a full step sequence — `discovery.md` has
 six steps, `consultation.md` has six — so their omission is de-duplication, not
-loss. `06` has **no workflow counterpart by explicit design**, and
-`consultation.md` *consumes* qualification rather than performing it: its
-purpose is *"transitioning a **qualified prospect** into a consultation
-request"*, its declared input is *"Qualified lead"*, and its first step is
-"Confirm Interest". Grepping the six assembled prompt sources plus
-`core/guardrails/` for "qualif" yields a single hit — `02_mission.md`'s
-*"Qualified leads when applicable"*, an outcome, not criteria.
+loss. `06` has **no workflow counterpart by explicit design**.
+
+> **Correction (2026-08-09).** An earlier version of this entry stated that
+> `consultation.md` *"consumes qualification rather than performing it"* and that
+> *"its declared input is 'Qualified lead'"*. **Both claims are false.**
+> `consultation.md`'s Inputs are *Recommendation Summary, Customer Information,
+> Company Knowledge*; "Qualified lead" appears in its **Outputs**.
+> `consultation.md` **produces** a qualified lead. Its **Prerequisites**
+> (*business type, requested service, business goals, primary challenges*) also
+> map closely onto `06`'s **Qualification Criteria**, so the qualification
+> information-gathering is operationalised inside an already-assembled slot.
+> This removed the producer/consumer gap the finding originally rested on.
 
 An earlier argument that workflow **Dependencies** lists prove `06` must be
 injected was withdrawn: `consultation.md` lists *"Discovery Workflow"* as a
 dependency, and §4 explicitly says non-active workflows appear *"only as an
 index"*. A Dependencies entry therefore does not imply injection.
 
-#### Why implementation must not choose autonomously
+#### Why the behavioural premise did not survive review
 
-Implementing §4 verbatim violates no frozen text — but it silently adopts
-Interpretation B, and freezing that order would convert an unmade decision into
-a permanent one. Adding a slot would silently adopt Interpretation A and amend
-the Architecture Freeze without authority. Both are the same failure: encoding
-an accidental interpretation as architecture.
+The finding's last surviving pillar was that `06`'s *"Not Qualified"* branch had
+no delivery path. It does:
 
-**Architectural decision required from the system owner.**
+- **`09_fallback_responses.md` (assembled, slot 5)** lists Fallback Scenarios
+  including *"Unsupported requests"*, *"Questions outside the Knowledge Base"*
+  and *"Requests requiring human assistance"*. A prospect whose need does not
+  match the business is an unsupported request.
+- **`core/guardrails/escalation.md` (assembled, slot 4)** escalates when *"The
+  AI cannot confidently answer after clarification"* or *"A human is better
+  suited to resolve the situation."*
+- **`06`'s own Notes** state its purpose *"is not to filter people out… [but] to
+  ensure that users receive the most appropriate next step"* — which is exactly
+  what those two assembled slots produce.
+- **`discovery.md`'s Decision Point** (*"Otherwise: continue asking relevant
+  discovery questions"*) already implements `06`'s *"More Information
+  Required"* outcome.
+
+So two of `06`'s three outputs are already live in assembled content and the
+third is delivered behaviourally. What `06` uniquely contributes is a **naming
+vocabulary**, not an unimplemented behaviour.
+
+#### Two further corrections to earlier analysis
+
+1. **Prompt section structure does not predict assembly.**
+   `09_fallback_responses.md` and `10_tool_instructions.md` are assembled and
+   share `04/05/06/07`'s exact shape. There is no "unassembled family".
+2. **`docs/architecture.md:42–55` provides no support for assembling `06`.**
+   Its example list — *"Personality, Mission, Conversation Rules, Discovery,
+   Recommendation, Lead Qualification"* — also names Discovery and
+   Recommendation (`04`, `05`), which are indisputably delivered via workflows.
+   If that list implied assembly it would demand slots for those too. It
+   describes the directory, not the assembly order.
+
+#### Evidence sweep — no product requirement exists
+
+A repository-wide sweep for an explicit product or business requirement that an
+agent must reject or decline an unqualified prospect, or must emit `06`'s
+three-valued outcome, returned **nothing**. `"Not Qualified"` and `"More
+Information Required"` appear nowhere outside `06` itself; `projects/` contains
+no qualification vocabulary at all; and no `must`/`shall` sentence anywhere ties
+a requirement to declining a prospect. The nearest candidate,
+`core/workflows/crm_sync.md`'s *"Disqualified"*, is explicitly labelled
+**"Examples"**, describes a CRM record status rather than agent behaviour, and
+does not match `06`'s vocabulary.
+
+**If that business requirement is ever established, this entry should be
+re-opened** — the correct owner would then be `core/workflows/recommendation.md`,
+whose Decision Point is the Recommendation → Consultation boundary, **not**
+`consultation.md`, whose purpose already presupposes a qualified prospect.
 
 ### PA-4 — §4 cites an assembly order in a section that does not exist
 
