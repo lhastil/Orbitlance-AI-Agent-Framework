@@ -7,10 +7,17 @@ Tracks issues in `runtime/` — the implementation layer. Distinct from
 closed by decision** ([ADR 0004](adr/0004-config-stays-markdown-loader-owns-parsing.md)).
 V-5 and V-7 postponed with ADRs.
 
-**No issue in this register is Blocking.** No open item requires amending a
-frozen model, breaking a published signature, or rewriting a downstream module.
-Confidence in `ProjectContext` as a permanent dependency is **≥95%** — see the
-assessment below the Task 2 heading.
+**No issue in this register is Blocking.** No open item breaks a published
+signature or requires rewriting a shipped module. Confidence in
+`ProjectContext` as a permanent dependency is **≥95%** — see the assessment
+below the Task 2 heading.
+
+**One open ARCHITECTURE ISSUE: [PA-3](#pa-3--core-prompts06_lead_qualificationmd-has-no-delivery-path-to-the-model).**
+It is the only entry that cannot be closed without a decision from the system
+owner, because either resolution amends a frozen document. It does not block
+building Runtime Module 4 against the specification as written; it blocks
+*freezing* Module 4, because freezing the assembly order as written would settle
+the question by default rather than by decision.
 
 ---
 
@@ -22,6 +29,7 @@ one class.
 | Class | Meaning | Blocks a freeze? |
 |---|---|---|
 | **Blocking** | Freezing forces a later redesign: a breaking signature change, an amended frozen model, or a rewritten downstream module. | **Yes** |
+| **Architecture Issue** | The runtime is implementable, but a design question is unsettled and closing it amends a frozen document. Only the system owner may decide. | **Blocks freeze, not implementation** |
 | **Additive Extension** | A new field, method or type will be added later. Nothing existing changes shape. | No |
 | **Runtime Improvement** | Internal quality, precision or hygiene. Invisible across the module boundary. | No |
 | **Documentation / Reporting** | The behaviour is correct and tested; what is open is that a future module must *know* it. Nothing to build. | No |
@@ -49,6 +57,8 @@ one class.
 | **R3-2** | **`ResolvedContext` caching ownership unassigned** | **Documentation / Reporting** |
 | **R3-3** | **Missing Branding resolves to an empty overlay** | **Documentation / Reporting** |
 | **R3-4** | **`ResolvedContext` has no consumer yet** | **Additive Extension** |
+| **PA-3** | **`core/prompts/06_lead_qualification.md` has no delivery path to the model** | **ARCHITECTURE ISSUE — open, owner decision required** |
+| **PA-4** | **§4 cites an assembly order in a section that does not exist** | **Documentation / Reporting** |
 
 ---
 
@@ -438,6 +448,121 @@ without altering a single existing consumer.
 **Do not pre-build speculative fields.** A consumer that needs something absent
 should specify it, exactly as the Resolver specified nothing until the frozen
 spec required it. Any such addition is expected to be additive, not a redesign.
+
+---
+
+## Found during the Runtime Module 4 (Prompt Assembler) architecture study, 2026-08-09
+
+No code was written and no frozen document was modified. Module 4 is **not**
+implemented.
+
+### PA-3 — `core/prompts/06_lead_qualification.md` has no delivery path to the model
+
+**Class: ARCHITECTURE ISSUE** · **Open** · **Architectural decision required from
+the system owner**
+
+#### What each frozen document says
+
+**`docs/runtime-specification.md` §4, Prompt Assembler, row 2** — the assembly
+order, stated in full:
+
+> Core Personality → Mission → Conversation Rules → Guardrails bundle →
+> Fallback Responses → Tool Instructions → Branding overlay → Knowledge (per
+> Token Budget Manager's selection) → active Workflow's instructions (others
+> present only as an index).
+
+Nine slots. `06_lead_qualification.md` is not among them. The frozen `CoreBundle`
+data-model row independently names the same six prompt modules
+(*personality, mission, conversationRules, guardrailsBundle, fallbackResponses,
+toolInstructions*) and likewise excludes it.
+
+**`docs/architecture.md:123`:**
+
+> **Lead Qualification is deliberately prompt-only.** It exists as
+> `core/prompts/06_lead_qualification.md` with no corresponding workflow file.
+> … Lead Qualification is a continuous *judgment* the agent applies while inside
+> those workflows … Workflow files referencing "Lead Qualification" as a
+> dependency refer to this prompt module.
+
+**`docs/architecture.md:42–55`** describes `core/prompts/` as *"Defines the AI's
+behavior"* and lists Lead Qualification among its examples: *"Prompts define
+how the AI behaves."*
+
+#### There is no literal textual contradiction — the gap is behavioural
+
+This entry deliberately does **not** claim the two documents contradict each
+other, and an earlier draft of this finding that did so was wrong.
+
+`architecture.md:123`'s subject is **why no workflow file exists**. "Prompt-only"
+is a statement about *where the file lives* — in `core/prompts/`, not
+`core/workflows/` — and that statement is true regardless of assembly. **No
+frozen document anywhere states that every file in `core/prompts/` is injected
+into the assembled prompt.** Verified: `08_guardrails.md` describes injection,
+but only of `core/guardrails/`; §4 is the sole frozen statement about assembly,
+and it is complete and unambiguous.
+
+So both documents are simultaneously true as written. What is missing is a
+**mechanism**: `architecture.md` describes an agent behaviour — a continuous
+qualification judgment — that the frozen assembly order provides no way to
+produce. That is an incompleteness in the design, not a defect in either
+document's text.
+
+#### Why the two interpretations cannot both be satisfied
+
+The documents can coexist; the two *runtime behaviours* cannot. Either the
+module is assembled or it is not.
+
+| | Interpretation A — assemble it | Interpretation B — do not |
+|---|---|---|
+| Runtime behaviour | The qualification criteria are in every prompt; the agent can apply the continuous judgment `architecture.md` describes. | The criteria never reach the model. The agent cannot apply the judgment; `06` becomes an authoring reference, like a template. |
+| Consequence for `06` | A live behavioural prompt module. | A file the Validation Layer requires to exist (`REQUIRED_PROMPTS` lists all ten) that no runtime path ever uses. |
+| What must change | `runtime-specification.md` §4 row 2 **and** the `CoreBundle` data-model row. | `architecture.md:123`'s phrasing, to stop asserting a behaviour no mechanism produces. |
+
+**Both resolutions amend a frozen document.** There is no third option that
+closes the issue without touching the Architecture Freeze.
+
+#### Why `06` is uniquely affected
+
+`04_discovery_engine.md`, `05_recommendation_engine.md` and
+`07_consultation_request.md` are also absent from the assembly order, but each
+has a workflow counterpart carrying a full step sequence — `discovery.md` has
+six steps, `consultation.md` has six — so their omission is de-duplication, not
+loss. `06` has **no workflow counterpart by explicit design**, and
+`consultation.md` *consumes* qualification rather than performing it: its
+purpose is *"transitioning a **qualified prospect** into a consultation
+request"*, its declared input is *"Qualified lead"*, and its first step is
+"Confirm Interest". Grepping the six assembled prompt sources plus
+`core/guardrails/` for "qualif" yields a single hit — `02_mission.md`'s
+*"Qualified leads when applicable"*, an outcome, not criteria.
+
+An earlier argument that workflow **Dependencies** lists prove `06` must be
+injected was withdrawn: `consultation.md` lists *"Discovery Workflow"* as a
+dependency, and §4 explicitly says non-active workflows appear *"only as an
+index"*. A Dependencies entry therefore does not imply injection.
+
+#### Why implementation must not choose autonomously
+
+Implementing §4 verbatim violates no frozen text — but it silently adopts
+Interpretation B, and freezing that order would convert an unmade decision into
+a permanent one. Adding a slot would silently adopt Interpretation A and amend
+the Architecture Freeze without authority. Both are the same failure: encoding
+an accidental interpretation as architecture.
+
+**Architectural decision required from the system owner.**
+
+### PA-4 — §4 cites an assembly order in a section that does not exist
+
+**Class: Documentation / Reporting** · **Non-blocking**
+
+`runtime-specification.md` §4 row 1 says the bundle is built *"per the assembly
+order in the Runtime Architecture"*. `docs/architecture.md` contains no assembly
+order; its "High-Level Architecture" is a conceptual pipeline (Prompts →
+Knowledge Base → Reasoning → Workflows → Tools → Response) that the §4 order is
+consistent with but does not restate.
+
+Nothing is ambiguous — **the order is stated inline and in full in §4 row 2**,
+which is the authoritative text. Only the cross-reference is dangling. Recorded
+so a future reader does not go looking for a section that was never written.
 
 ---
 
