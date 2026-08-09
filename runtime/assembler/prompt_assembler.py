@@ -46,6 +46,34 @@ from runtime.models.resolved_context import ResolvedContext
 _SEPARATOR = "\n\n"
 
 
+def _provenance(
+    document: ProjectDocument, fallback: str, project_id: str | None = None
+) -> str:
+    """Where this text actually came from, as the Loader recorded it.
+
+    `ProjectDocument.relative_path` is set by whichever Loader read the file, so
+    it is evidence about the text's origin rather than a label the assembler
+    invented for the slot it was filling. Core documents already carry a
+    repository-relative path (`core/prompts/02_mission.md`); project documents
+    carry a project-relative one (`knowledge/01_company.md`), which is prefixed
+    here so both live in one namespace.
+
+    `fallback` applies when a document records no usable path — either empty or
+    a bare filename, which carries no directory and therefore no provenance. It
+    names the slot's expected location, so provenance is unverified for that
+    document, which is precisely why a fallback can never be a playbook path.
+
+    This does not prove content origin. See PA-6 for what it does and does not
+    establish.
+    """
+    path = (document.relative_path or "").replace("\\", "/").strip()
+    if not path or "/" not in path:
+        return fallback
+    if path.startswith(("core/", "projects/")):
+        return path
+    return f"projects/{project_id}/{path}" if project_id else path
+
+
 class PromptAssembler:
     """Assembles a `PromptBundle`. Stateless apart from its injected collaborators."""
 
@@ -111,7 +139,9 @@ class PromptAssembler:
         if document is None or not document.exists or document.is_empty:
             return None
         return PromptSection(
-            slot=slot, source=f"core/prompts/{filename}", content=document.raw_text.strip()
+            slot=slot,
+            sources=(_provenance(document, f"core/prompts/{filename}"),),
+            content=document.raw_text.strip(),
         )
 
     def _guardrails(self) -> PromptSection | None:
@@ -127,12 +157,12 @@ class PromptAssembler:
             if document is None or not document.exists or document.is_empty:
                 continue
             parts.append(document.raw_text.strip())
-            rendered.append(f"core/guardrails/{filename}")
+            rendered.append(_provenance(document, f"core/guardrails/{filename}"))
         if not parts:
             return None
         return PromptSection(
             slot=PromptSlot.GUARDRAILS,
-            source=", ".join(rendered),
+            sources=tuple(rendered),
             content=_SEPARATOR.join(parts),
         )
 
@@ -146,9 +176,7 @@ class PromptAssembler:
         and copying it would send the same text twice.
         """
         return PromptAssembler._documents_section(
-            PromptSlot.BRANDING,
-            context.branding,
-            [f"projects/{context.project_id}/branding/{n}" for n in context.branding],
+            PromptSlot.BRANDING, context.branding, context.project_id
         )
 
     def _knowledge(self, context: ResolvedContext) -> PromptSection | None:
@@ -158,9 +186,7 @@ class PromptAssembler:
             name: context.knowledge[name] for name in selected if name in context.knowledge
         }
         return self._documents_section(
-            PromptSlot.KNOWLEDGE,
-            documents,
-            [f"projects/{context.project_id}/knowledge/{n}" for n in documents],
+            PromptSlot.KNOWLEDGE, documents, context.project_id
         )
 
     def _select_knowledge(self, context: ResolvedContext) -> tuple[str, ...]:
@@ -195,7 +221,7 @@ class PromptAssembler:
             )
         return PromptSection(
             slot=PromptSlot.WORKFLOW,
-            source=f"core/workflows/{active}.md",
+            sources=(_provenance(document, f"core/workflows/{active}.md"),),
             content=content,
         )
 
@@ -203,17 +229,25 @@ class PromptAssembler:
     def _documents_section(
         slot: PromptSlot,
         documents: Mapping[str, ProjectDocument],
-        sources: list[str],
+        project_id: str,
     ) -> PromptSection | None:
-        live = [
-            doc.raw_text.strip()
-            for doc in documents.values()
-            if doc.exists and not doc.is_empty
-        ]
-        if not live:
+        """Render live documents, recording provenance for exactly those.
+
+        Sources are derived from the documents actually rendered, never from the
+        full candidate list — an earlier revision listed empty documents it had
+        skipped, overstating provenance (PA-7).
+        """
+        parts: list[str] = []
+        sources: list[str] = []
+        for name, doc in documents.items():
+            if not doc.exists or doc.is_empty:
+                continue
+            parts.append(doc.raw_text.strip())
+            sources.append(_provenance(doc, f"projects/{project_id}/{name}", project_id))
+        if not parts:
             return None
         return PromptSection(
-            slot=slot, source=", ".join(sources), content=_SEPARATOR.join(live)
+            slot=slot, sources=tuple(sources), content=_SEPARATOR.join(parts)
         )
 
     # --- degraded assembly (rule 9) -----------------------------------------
@@ -230,7 +264,7 @@ class PromptAssembler:
                 sections.append(
                     PromptSection(
                         slot=slot,
-                        source="runtime/assembler/core_slots.py",
+                        sources=("runtime/assembler/core_slots.py",),
                         content=slots.DEGRADED_NOTICE,
                     )
                 )
@@ -249,13 +283,26 @@ class PromptAssembler:
     def _assert_no_playbook_content(sections: tuple[PromptSection, ...]) -> None:
         """No assembled section may originate under `core/industry_playbooks/`.
 
-        Provenance, not substring. Several assembled files legitimately *mention*
-        Industry Playbooks — `core/guardrails/safety.md`, `compliance.md` and
-        `escalation.md` all defer industry specifics to them, and
-        `core/workflows/discovery.md` and `recommendation.md` explain that
-        playbooks are never loaded. A text search would reject those valid
-        bundles while catching nothing real, since playbook *content* can only
-        enter through a source path.
+        Provenance, not substring, and **every** source is inspected — an
+        earlier revision joined sources into one string and tested it with
+        `startswith`, so only the first path was ever checked (PA-5).
+
+        A substring check would be wrong regardless: several assembled files
+        legitimately *mention* Industry Playbooks. `core/guardrails/safety.md`,
+        `compliance.md` and `escalation.md` all defer industry specifics to
+        them, and `core/workflows/discovery.md` and `recommendation.md` state
+        that playbooks never load at runtime. Nine such mentions appear in a
+        real assembled bundle, so a text search would reject valid output.
+
+        **What this cannot establish (PA-6).** Provenance comes from
+        `ProjectDocument.relative_path` — what the Loader recorded about where
+        the text was read. That catches the realistic Core Loader defect: a
+        playbook document misfiled into a prompt slot while still carrying its
+        true path. It cannot catch a document carrying playbook *text* under a
+        falsified path, because `CoreBundle` holds no content-origin metadata
+        and no playbook text to compare against. That case is covered at the
+        test boundary by the spec's own rule-12(b) fixture test, which checks
+        real assembled output against real playbook strings.
         """
         for section in sections:
             if section.is_from_playbook:

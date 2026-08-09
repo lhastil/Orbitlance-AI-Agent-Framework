@@ -59,6 +59,10 @@ one class.
 | **R3-4** | **`ResolvedContext` has no consumer yet** | **Additive Extension** |
 | **PA-3** | **`06_lead_qualification.md` is not assembled; its behaviour is delivered distributively** | **Documentation / Reporting** (was: Architecture Issue) |
 | **PA-4** | **§4 cites an assembly order in a section that does not exist** | **Documentation / Reporting** |
+| **PA-5** | **Playbook provenance check inspected only the first source** | **Closed** |
+| **PA-6** | **Runtime provenance cannot prove content origin** | **Documentation / Reporting** |
+| **PA-7** | **Section provenance listed documents that were not rendered** | **Closed** |
+| **PA-8** | **Spec §12(b) known-playbook-string fixture test was missing** | **Closed** |
 
 ---
 
@@ -389,6 +393,86 @@ Measured before changing anything:
 everything Validation accepts, the Resolver must also resolve — checked
 exhaustively over the alias table, so the two can never drift apart again
 without a test failing.
+
+### PA-5 — The playbook provenance check inspected only the first source
+
+**Class: Closed** · fixed 2026-08-09
+
+`PromptSection.source` was a single comma-joined string and `is_from_playbook`
+tested it with `startswith`, so for any multi-document slot — Guardrails,
+Knowledge, Branding — only the first path was ever examined. A section sourced
+from `"projects/x/knowledge/a.md, core/industry_playbooks/healthcare.md"`
+reported `False` and the rule-10 assertion did not fire.
+
+Not reachable in the shipped code, because no path produced a playbook source,
+but a logic defect in a safety assertion nonetheless.
+
+**Fixed** by making provenance structured: `PromptSection.sources` is a tuple
+and every entry is checked. `source` is retained as a joined property for
+display. Regression test: `test_playbook_source_is_detected_in_any_position`.
+
+### PA-6 — Runtime provenance cannot prove content origin
+
+**Class: Documentation / Reporting** · **Open by necessity, not by choice**
+
+Rule 10 requires that assembled output never contain a string sourced from
+`core/industry_playbooks/`, *"enforced as a hard runtime assertion, not just a
+design intention"*.
+
+**What was wrong.** The first implementation asserted on a label the assembler
+assigned itself from the slot it was filling, which made the check tautological:
+it could never fail. Injecting the full text of `core/industry_playbooks/healthcare.md`
+into `CoreBundle.prompts["02_mission.md"]` — exactly the Core Loader defect the
+rule exists to catch — assembled cleanly with playbook text in the Mission slot.
+
+**What was fixed.** Provenance now comes from `ProjectDocument.relative_path`,
+which the Loader records from where the file was actually read. This is existing
+evidence, not invented metadata. The realistic defect — a Loader globbing
+`core/industry_playbooks/*.md` into another group while carrying the true path —
+**is now detected** and raises `PlaybookLeakError`.
+
+**What remains impossible.** A document carrying playbook *text* under a
+falsified `relative_path` is indistinguishable from a genuine prompt. The
+assembler receives no content-origin metadata and no playbook text to compare
+against: `CoreBundle` carries `playbook_names` only, with no content field, by
+deliberate design. Establishing this would require adding provenance or playbook
+content to `CoreBundle` — a frozen data model — so it is **not** done.
+
+**Enforcement boundary.** For that residual case the spec's own rule-12(b)
+fixture test is the enforcement mechanism: it checks real assembled output
+against real playbook strings. Both halves are covered by tests that state
+plainly which is which — `test_playbook_document_misfiled_into_a_prompt_slot_is_detected`
+and `test_playbook_content_with_a_falsified_path_is_not_detectable`.
+
+This entry stays open as documentation so no future reader assumes the runtime
+assertion proves more than it does.
+
+### PA-7 — Section provenance listed documents that were not rendered
+
+**Class: Closed** · fixed 2026-08-09
+
+`sources` for Knowledge and Branding was built from every candidate document
+while `content` was built only from live ones, so an empty document appeared in
+the provenance record without contributing text. Both are now derived in one
+pass over the documents actually rendered. Regression test:
+`test_sources_record_only_documents_actually_rendered`.
+
+### PA-8 — Spec §12(b)'s known-playbook-string fixture test was missing
+
+**Class: Closed** · fixed 2026-08-09
+
+Spec §12(b) requires *"output never contains a known playbook string
+(snapshot/fixture test)"*. The original suite tested provenance only; no test
+read `core/industry_playbooks/` content, so the required check did not exist.
+
+**Fixed** with a parametrised fixture test that takes a distinctive prose line
+verbatim from each real playbook file and asserts it never appears in assembled
+output — for the normal bundle and the degraded bundle — using a `CoreBundle`
+built from the real `core/` tree. A guard test asserts the fixture corpus is
+non-empty, so the check cannot silently become vacuous. `core/` is read, never
+modified.
+
+---
 
 ### R3-2 — `ResolvedContext` caching ownership is unassigned
 

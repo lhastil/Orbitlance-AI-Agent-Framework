@@ -74,15 +74,37 @@ ASSEMBLY_ORDER: tuple[PromptSlot, ...] = (
 
 @dataclass(frozen=True, slots=True)
 class PromptSection:
-    """One rendered slot, with the provenance of the text it carries."""
+    """One rendered slot, with the provenance of the text it carries.
+
+    `sources` is a tuple, not a joined string. An earlier revision stored one
+    comma-joined field and tested it with `startswith`, which inspected only the
+    first path and silently ignored every later one (PA-5). Provenance is
+    structured here so that class of bug cannot recur.
+
+    Each entry is a repository-relative path taken from the originating
+    `ProjectDocument.relative_path` — what the Loader recorded about where the
+    text actually came from — not a label the assembler chose. See PA-6 in
+    docs/known-issues-runtime.md for what that does and does not prove.
+    """
 
     slot: PromptSlot
-    source: str
+    sources: tuple[str, ...]
     content: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "sources", tuple(self.sources))
+
+    @property
+    def source(self) -> str:
+        """Human-readable provenance. Display only — never assert on this."""
+        return ", ".join(self.sources)
 
     @property
     def is_from_playbook(self) -> bool:
-        return self.source.replace("\\", "/").startswith(PLAYBOOK_DIRECTORY)
+        """True when *any* source lies under `core/industry_playbooks/`."""
+        return any(
+            path.replace("\\", "/").startswith(PLAYBOOK_DIRECTORY) for path in self.sources
+        )
 
 
 @dataclass(frozen=True, slots=True)

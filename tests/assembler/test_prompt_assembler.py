@@ -8,6 +8,7 @@ guardrails marker never rendered, 06 never assembled, purity and determinism.
 from __future__ import annotations
 
 import dataclasses
+import pathlib
 
 import pytest
 
@@ -157,11 +158,53 @@ def test_playbook_sourced_section_raises() -> None:
     """The rule-10 assertion is hard, not advisory."""
     leaked = PromptSection(
         slot=PromptSlot.KNOWLEDGE,
-        source="core/industry_playbooks/healthcare.md",
+        sources=("core/industry_playbooks/healthcare.md",),
         content="playbook body",
     )
     with pytest.raises(PlaybookLeakError):
         PromptAssembler._assert_no_playbook_content((leaked,))
+
+
+# --- PA-5 regression: multi-source provenance -------------------------------
+def test_playbook_source_is_detected_in_any_position() -> None:
+    """PA-5: a joined string plus startswith() inspected only the first path."""
+    leaked = PromptSection(
+        slot=PromptSlot.KNOWLEDGE,
+        sources=(
+            "projects/x/knowledge/a.md",
+            "core/industry_playbooks/healthcare.md",
+        ),
+        content="...",
+    )
+    assert leaked.is_from_playbook, "a later source must not be ignored"
+    with pytest.raises(PlaybookLeakError):
+        PromptAssembler._assert_no_playbook_content((leaked,))
+
+
+def test_source_property_still_renders_joined_provenance() -> None:
+    section = PromptSection(
+        slot=PromptSlot.KNOWLEDGE, sources=("a/b.md", "c/d.md"), content="x"
+    )
+    assert section.source == "a/b.md, c/d.md"
+    assert not section.is_from_playbook
+
+
+def test_sources_record_only_documents_actually_rendered() -> None:
+    """PA-7: an empty document must not be listed as a source."""
+    bundle = assemble(
+        ctx=resolved(
+            knowledge={
+                "01_company.md": doc("01_company.md", "real"),
+                "02_services.md": ProjectDocument(
+                    "02_services.md", "knowledge/02_services.md", exists=True, raw_text="  "
+                ),
+            }
+        )
+    )
+    knowledge = bundle.section(PromptSlot.KNOWLEDGE)
+    assert knowledge is not None
+    assert len(knowledge.sources) == 1
+    assert "02_services" not in knowledge.source
 
 
 def test_content_that_merely_mentions_playbooks_is_allowed() -> None:
@@ -380,3 +423,157 @@ def test_assembler_touches_no_forbidden_module_or_capability() -> None:
             assert forbidden not in source, f"{path.name} imports {forbidden}"
         for capability in ("open(", "pathlib", "re.compile", "os."):
             assert capability not in source, f"{path.name} uses {capability}"
+
+
+# --- spec §12(b): known playbook string, against the real repository ---------
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+PLAYBOOK_DIR = REPO_ROOT / "core" / "industry_playbooks"
+
+
+def real_playbook_lines() -> list[tuple[str, str]]:
+    """Distinctive prose lines taken verbatim from real playbook files.
+
+    Long, non-heading lines only, so a match is genuine playbook content rather
+    than an incidental word. Read from `core/` and never modified.
+    """
+    collected: list[tuple[str, str]] = []
+    for path in sorted(PLAYBOOK_DIR.glob("*.md")):
+        if path.stem.startswith("_"):
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if len(line) > 80 and not line.startswith(("#", "-", "|", "*", ">")):
+                collected.append((path.name, line))
+                break
+    return collected
+
+
+def real_core_bundle() -> CoreBundle:
+    """A CoreBundle built from the real `core/` tree, playbooks excluded."""
+
+    def group(sub: str) -> dict[str, ProjectDocument]:
+        directory = REPO_ROOT / "core" / sub
+        return {
+            p.name: ProjectDocument(
+                p.name, f"core/{sub}/{p.name}", True, p.read_text(encoding="utf-8")
+            )
+            for p in sorted(directory.glob("*.md"))
+        }
+
+    return CoreBundle(
+        prompts=group("prompts"),
+        guardrails=group("guardrails"),
+        workflows=group("workflows"),
+        playbook_names=frozenset(
+            p.stem for p in PLAYBOOK_DIR.glob("*.md") if not p.stem.startswith("_")
+        ),
+    )
+
+
+def test_real_playbook_fixture_material_exists() -> None:
+    """Guards the fixture itself: a vacuous corpus would make §12(b) meaningless."""
+    lines = real_playbook_lines()
+    assert len(lines) >= 5, f"expected distinctive lines from each playbook, got {lines}"
+
+
+@pytest.mark.parametrize(("playbook", "line"), real_playbook_lines())
+def test_assembled_output_never_contains_a_known_playbook_string(playbook, line) -> None:
+    """Spec §12(b), against real Core content and a real playbook fixture."""
+    core = real_core_bundle()
+    ctx = ResolvedContext(
+        project_id="fixture_client",
+        knowledge={"01_company.md": doc("01_company.md", "We sell widgets.")},
+        branding={"brand.md": doc("brand.md", "Warm and precise.")},
+        config=ResolvedConfig(enabled_workflows=WORKFLOWS),
+        knowledge_incomplete=False,
+    )
+    bundle = PromptAssembler(core).assemble(
+        ctx, state("consultation"), conversation()
+    )
+    combined = "\n".join(s.content for s in bundle.static_sections)
+    assert line not in combined, f"{playbook} content leaked into the assembled prompt"
+
+
+def test_degraded_bundle_also_contains_no_known_playbook_string() -> None:
+    core = real_core_bundle()
+    ctx = ResolvedContext(
+        project_id="fixture_client", config=ResolvedConfig(), knowledge_incomplete=True
+    )
+    bundle = PromptAssembler(core).assemble(ctx, state(None), conversation())
+    combined = "\n".join(s.content for s in bundle.static_sections)
+    for _playbook, line in real_playbook_lines():
+        assert line not in combined
+
+
+def test_real_core_content_mentioning_playbooks_still_assembles() -> None:
+    """Test 4: legitimate references must not be mistaken for leaked content.
+
+    Real guardrails and workflows defer industry specifics to Playbooks by name.
+    """
+    core = real_core_bundle()
+    ctx = ResolvedContext(
+        project_id="fixture_client",
+        knowledge={"01_company.md": doc("01_company.md", "We sell widgets.")},
+        config=ResolvedConfig(enabled_workflows=WORKFLOWS),
+        knowledge_incomplete=False,
+    )
+    bundle = PromptAssembler(core).assemble(ctx, state("discovery"), conversation())
+    combined = "\n".join(s.content for s in bundle.static_sections)
+    assert "Playbook" in combined, "expected legitimate references in real Core text"
+    assert not any(s.is_from_playbook for s in bundle.static_sections)
+
+
+# --- PA-6: the limit of what provenance can observe --------------------------
+def test_playbook_document_misfiled_into_a_prompt_slot_is_detected() -> None:
+    """PA-6, detectable half: a Loader that misfiles a playbook but records its
+    true path is caught, because provenance now comes from the document."""
+    playbook = PLAYBOOK_DIR / "healthcare.md"
+    misfiled = ProjectDocument(
+        "02_mission.md",
+        "core/industry_playbooks/healthcare.md",
+        True,
+        playbook.read_text(encoding="utf-8"),
+    )
+    core = core_bundle(prompts={**core_bundle().prompts, "02_mission.md": misfiled})
+    with pytest.raises(PlaybookLeakError):
+        assemble(core=core)
+
+
+def test_playbook_content_with_a_falsified_path_is_not_detectable() -> None:
+    """PA-6, undetectable half — recorded honestly rather than hidden.
+
+    If a document carries playbook text but a `relative_path` claiming to be a
+    prompt, no information reaching the assembler distinguishes it from a
+    genuine prompt: `CoreBundle` carries no content-origin metadata and no
+    playbook text to compare against. The fixture test above is the enforcement
+    boundary for this case, not the runtime assertion.
+    """
+    playbook = PLAYBOOK_DIR / "healthcare.md"
+    falsified = ProjectDocument(
+        "02_mission.md", "core/prompts/02_mission.md", True,
+        playbook.read_text(encoding="utf-8"),
+    )
+    core = core_bundle(prompts={**core_bundle().prompts, "02_mission.md": falsified})
+    bundle = assemble(core=core)  # does not raise -- documented limitation
+    mission = bundle.section(PromptSlot.MISSION)
+    assert mission is not None and not mission.is_from_playbook
+
+
+# --- Test 5: partial CoreBundle ---------------------------------------------
+def test_missing_core_prompt_omits_its_slot_without_crashing() -> None:
+    prompts = {k: v for k, v in core_bundle().prompts.items() if k != "02_mission.md"}
+    bundle = assemble(core=core_bundle(prompts=prompts))
+    assert bundle.section(PromptSlot.MISSION) is None
+    assert bundle.section(PromptSlot.CORE_PERSONALITY) is not None
+
+
+def test_missing_guardrail_file_still_renders_the_remaining_bundle() -> None:
+    core = core_bundle(guardrails={"safety.md": doc("safety.md")})
+    guardrails = assemble(core=core).section(PromptSlot.GUARDRAILS)
+    assert guardrails is not None
+    assert guardrails.sources == ("core/guardrails/safety.md",)
+
+
+def test_no_guardrails_at_all_omits_the_slot() -> None:
+    bundle = assemble(core=core_bundle(guardrails={}))
+    assert bundle.section(PromptSlot.GUARDRAILS) is None
