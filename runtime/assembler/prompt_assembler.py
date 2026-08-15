@@ -32,9 +32,10 @@ from collections.abc import Mapping
 from runtime.assembler import core_slots as slots
 from runtime.assembler.errors import PlaybookLeakError, UnknownWorkflowError
 from runtime.assembler.ports import TokenBudgetPort
+from runtime.models.budget import BudgetRequest, BudgetSelection, SectionRef
 from runtime.models.conversation import ConversationContext, Turn, WorkflowState
 from runtime.models.core_bundle import CoreBundle
-from runtime.models.project_context import ProjectDocument
+from runtime.models.project_context import ProjectDocument, Section
 from runtime.models.prompt_bundle import (
     ASSEMBLY_ORDER,
     PromptBundle,
@@ -44,6 +45,30 @@ from runtime.models.prompt_bundle import (
 from runtime.models.resolved_context import ResolvedContext
 
 _SEPARATOR = "\n\n"
+
+
+def _render_section(section: Section) -> str:
+    """One Knowledge section as prompt text: its heading, then its body.
+
+    The heading marker is rebuilt from `heading_level` because the assembled
+    prompt has always carried Markdown headings — the previous renderer emitted
+    `raw_text` verbatim. Reproducing the marker plus the original heading text
+    preserves that exactly; the heading text itself is never regenerated,
+    normalised or invented.
+    """
+    heading = f"{'#' * section.heading_level} {section.heading_text}".strip()
+    body = section.body.strip()
+    return f"{heading}{_SEPARATOR}{body}" if body else heading
+
+
+def _every_section(context: ResolvedContext) -> tuple[SectionRef, ...]:
+    """Every section of every live Knowledge document, in document order."""
+    return tuple(
+        (name, section.ordinal)
+        for name, document in context.knowledge.items()
+        if document.exists and not document.is_empty
+        for section in document.sections
+    )
 
 
 def _provenance(
@@ -97,9 +122,12 @@ class PromptAssembler:
         """
         if resolved_context.knowledge_incomplete:
             sections = self._degraded_sections()
+            history: tuple[Turn, ...] = conversation_context.history
             degraded = True
         else:
-            sections = self._normal_sections(resolved_context, workflow_state)
+            sections, history = self._normal_sections(
+                resolved_context, workflow_state, conversation_context
+            )
             degraded = False
 
         self._assert_no_playbook_content(sections)
@@ -108,29 +136,47 @@ class PromptAssembler:
             project_id=resolved_context.project_id,
             conversation_id=conversation_context.conversation_id,
             static_sections=sections,
-            conversation_history_window=self._history(conversation_context),
+            conversation_history_window=history,
             latest_message=conversation_context.latest_user_message,
             degraded=degraded,
         )
 
     # --- normal assembly ----------------------------------------------------
     def _normal_sections(
-        self, context: ResolvedContext, state: WorkflowState
-    ) -> tuple[PromptSection, ...]:
-        """The nine frozen slots, in order. Empty slots are omitted, not faked."""
+        self,
+        context: ResolvedContext,
+        state: WorkflowState,
+        conversation: ConversationContext,
+    ) -> tuple[tuple[PromptSection, ...], tuple[Turn, ...]]:
+        """The nine frozen slots, in order. Empty slots are omitted, not faked.
+
+        Every fixed slot is rendered **before** the budget manager is consulted,
+        so it counts the real text rather than an estimate of it. Only the
+        Knowledge slot depends on that answer, so only it is built afterwards.
+        The build order differs from `ASSEMBLY_ORDER`; the output order does not.
+        """
         builders = {
             PromptSlot.GUARDRAILS: self._guardrails,
             PromptSlot.BRANDING: lambda: self._branding(context),
-            PromptSlot.KNOWLEDGE: lambda: self._knowledge(context),
             PromptSlot.WORKFLOW: lambda: self._workflow(context, state),
         }
-        sections: list[PromptSection] = []
+        fixed: dict[PromptSlot, PromptSection] = {}
         for slot in ASSEMBLY_ORDER:
+            if slot is PromptSlot.KNOWLEDGE:
+                continue
             build = builders.get(slot)
             section = build() if build else self._core_prompt(slot)
             if section is not None:
-                sections.append(section)
-        return tuple(sections)
+                fixed[slot] = section
+
+        selection = self._select(context, conversation, tuple(fixed.values()))
+        knowledge = self._knowledge(context, selection.knowledge_sections)
+
+        rendered = dict(fixed)
+        if knowledge is not None:
+            rendered[PromptSlot.KNOWLEDGE] = knowledge
+        ordered = tuple(rendered[slot] for slot in ASSEMBLY_ORDER if slot in rendered)
+        return ordered, selection.history_window
 
     def _core_prompt(self, slot: PromptSlot) -> PromptSection | None:
         """A slot sourced from a single `core/prompts/` file."""
@@ -179,20 +225,68 @@ class PromptAssembler:
             PromptSlot.BRANDING, context.branding, context.project_id
         )
 
-    def _knowledge(self, context: ResolvedContext) -> PromptSection | None:
-        """Knowledge, restricted to the Token Budget Manager's selection."""
-        selected = self._select_knowledge(context)
-        documents = {
-            name: context.knowledge[name] for name in selected if name in context.knowledge
-        }
-        return self._documents_section(
-            PromptSlot.KNOWLEDGE, documents, context.project_id
+    def _knowledge(
+        self, context: ResolvedContext, selected: tuple[SectionRef, ...]
+    ) -> PromptSection | None:
+        """Render exactly the selected sections, addressed by ordinal.
+
+        `raw_text` is deliberately not consulted here. Knowledge is rendered from
+        the Loader's lossless decomposition, so a document contributes only its
+        selected sections and duplicate headings stay distinct — the Loader
+        remains the sole Markdown parser and nothing is reconstructed.
+
+        `section_body(title)` is unusable for this: it is first-occurrence lookup
+        and cannot address the second `Category` in a document that has five. An
+        unresolvable reference is skipped rather than invented.
+        """
+        parts: list[str] = []
+        sources: list[str] = []
+        for document_name, ordinal in selected:
+            document = context.knowledge.get(document_name)
+            if document is None or not document.exists:
+                continue
+            section = document.section(ordinal)
+            if section is None:
+                continue
+            rendered = _render_section(section)
+            if not rendered:
+                continue
+            parts.append(rendered)
+            base = _provenance(
+                document,
+                f"projects/{context.project_id}/{document_name}",
+                context.project_id,
+            )
+            sources.append(f"{base}#{ordinal}")
+        if not parts:
+            return None
+        return PromptSection(
+            slot=PromptSlot.KNOWLEDGE,
+            sources=tuple(sources),
+            content=_SEPARATOR.join(parts),
         )
 
-    def _select_knowledge(self, context: ResolvedContext) -> tuple[str, ...]:
+    def _select(
+        self,
+        context: ResolvedContext,
+        conversation: ConversationContext,
+        fixed: tuple[PromptSection, ...],
+    ) -> BudgetSelection:
+        """Ask the budget manager what fits, handing it the real rendered text."""
         if self._budget is None:
-            return tuple(context.knowledge)  # Phase 1: all of them.
-        return tuple(self._budget.select_knowledge(context))
+            return BudgetSelection(
+                knowledge_sections=_every_section(context),  # Phase 1: all of them.
+                history_window=conversation.history,
+            )
+        return self._budget.select(
+            BudgetRequest(
+                project_id=context.project_id,
+                fixed_sections=fixed,
+                latest_message=conversation.latest_user_message,
+                knowledge=context.knowledge,
+                conversation=conversation,
+            )
+        )
 
     def _workflow(
         self, context: ResolvedContext, state: WorkflowState
@@ -312,8 +406,3 @@ class PromptAssembler:
                     "and must never reach an assembled prompt."
                 )
 
-    # --- history -------------------------------------------------------------
-    def _history(self, conversation: ConversationContext) -> tuple[Turn, ...]:
-        if self._budget is None:
-            return conversation.history
-        return tuple(self._budget.select_history(conversation))

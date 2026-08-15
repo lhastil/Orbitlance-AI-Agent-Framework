@@ -20,6 +20,8 @@ from runtime.assembler import (
     UnknownWorkflowError,
 )
 from runtime.assembler import core_slots as slots
+from runtime.loader import markdown
+from runtime.models.budget import BudgetSelection
 from runtime.models.conversation import (
     ConversationContext,
     Turn,
@@ -27,7 +29,7 @@ from runtime.models.conversation import (
     WorkflowState,
 )
 from runtime.models.core_bundle import CoreBundle
-from runtime.models.project_context import ProjectDocument
+from runtime.models.project_context import ProjectDocument, Section
 from runtime.models.prompt_bundle import PromptSection
 from runtime.models.resolved_context import ResolvedConfig, ResolvedContext
 
@@ -36,9 +38,32 @@ KNOWLEDGE = ("01_company.md", "02_services.md", "06_pricing.md")
 
 
 def doc(name: str, text: str | None = None) -> ProjectDocument:
+    """A document carrying the same lossless decomposition the Loader produces."""
+    body = text if text is not None else f"[{name} body]"
+    parsed = markdown.split_sections(body)
     return ProjectDocument(
-        name=name, relative_path=name, exists=True, raw_text=text or f"[{name} body]"
+        name=name,
+        relative_path=name,
+        exists=True,
+        raw_text=body,
+        sections=tuple(
+            Section(i, ps.heading, ps.level, ps.body)
+            for i, ps in enumerate(parsed.sections)
+        ),
+        preamble=parsed.preamble,
     )
+
+
+def kdoc(name: str, *sections: tuple[str, str]) -> ProjectDocument:
+    """A Knowledge document with explicit headings.
+
+    Knowledge is rendered section-by-section from v1.5 onward, so a Knowledge
+    fixture must carry headings exactly as a real project document does.
+    Defaults to one section named after the document.
+    """
+    pairs = sections or ((f"{name} heading", f"[{name} body]"),)
+    text = "\n\n".join(f"## {h}\n\n{b}" for h, b in pairs)
+    return doc(name, text)
 
 
 def core_bundle(**overrides) -> CoreBundle:
@@ -73,7 +98,7 @@ def resolved(
 ) -> ResolvedContext:
     return ResolvedContext(
         project_id="example_client",
-        knowledge={n: doc(n) for n in KNOWLEDGE} if knowledge is None else knowledge,
+        knowledge={n: kdoc(n) for n in KNOWLEDGE} if knowledge is None else knowledge,
         branding=branding or {},
         config=ResolvedConfig(enabled_workflows=enabled),
         knowledge_incomplete=incomplete,
@@ -194,7 +219,7 @@ def test_sources_record_only_documents_actually_rendered() -> None:
     bundle = assemble(
         ctx=resolved(
             knowledge={
-                "01_company.md": doc("01_company.md", "real"),
+                "01_company.md": kdoc("01_company.md"),
                 "02_services.md": ProjectDocument(
                     "02_services.md", "knowledge/02_services.md", exists=True, raw_text="  "
                 ),
@@ -365,27 +390,28 @@ def test_absent_budget_includes_all_knowledge_phase_one_behaviour() -> None:
 
 def test_injected_budget_restricts_knowledge_and_history() -> None:
     class Budget:
-        def select_knowledge(self, context):  # noqa: ARG002
-            return ("02_services.md",)
-
-        def select_history(self, conversation):
-            return conversation.turns[-1:]
+        def select(self, request):
+            return BudgetSelection(
+                knowledge_sections=(("02_services.md", 0),),
+                history_window=request.conversation.turns[-1:],
+            )
 
     bundle = assemble(token_budget=Budget())
     knowledge = bundle.section(PromptSlot.KNOWLEDGE)
     assert knowledge is not None
     assert "[02_services.md body]" in knowledge.content
     assert "[01_company.md body]" not in knowledge.content
+    assert knowledge.sources == ("projects/example_client/02_services.md#0",)
     assert len(bundle.conversation_history_window) == 1
 
 
 def test_budget_naming_an_absent_document_does_not_invent_content() -> None:
     class Budget:
-        def select_knowledge(self, context):  # noqa: ARG002
-            return ("99_does_not_exist.md",)
-
-        def select_history(self, conversation):
-            return conversation.turns
+        def select(self, request):
+            return BudgetSelection(
+                knowledge_sections=(("99_does_not_exist.md", 0), ("01_company.md", 99)),
+                history_window=request.conversation.turns,
+            )
 
     bundle = assemble(token_budget=Budget())
     assert bundle.section(PromptSlot.KNOWLEDGE) is None
@@ -577,3 +603,203 @@ def test_missing_guardrail_file_still_renders_the_remaining_bundle() -> None:
 def test_no_guardrails_at_all_omits_the_slot() -> None:
     bundle = assemble(core=core_bundle(guardrails={}))
     assert bundle.section(PromptSlot.GUARDRAILS) is None
+
+
+# --- Module 4 v1.5: section-level Knowledge + render-and-count seam ----------
+DUPES = (("Category", "Preventive"), ("Category", "Cosmetic"), ("CATEGORY", "Urgent"))
+
+
+def budget_returning(refs, history=()):
+    class Budget:
+        def select(self, request):  # noqa: ARG002
+            return BudgetSelection(knowledge_sections=refs, history_window=history)
+
+    return Budget()
+
+
+def test_single_section_is_rendered_with_its_original_heading() -> None:
+    ctx = resolved(
+        knowledge={"01_company.md": kdoc("01_company.md", ("Company Overview", "We sell widgets."))}
+    )
+    k = assemble(ctx=ctx).section(PromptSlot.KNOWLEDGE)
+    assert k is not None
+    assert k.content == "## Company Overview\n\nWe sell widgets."
+
+
+def test_multiple_sections_render_in_selection_order() -> None:
+    ctx = resolved(knowledge={"d.md": kdoc("d.md", ("A", "first"), ("B", "second"))})
+    k = assemble(ctx=ctx).section(PromptSlot.KNOWLEDGE)
+    assert k.content == "## A\n\nfirst\n\n## B\n\nsecond"
+
+
+def test_duplicate_headings_stay_distinct_sections() -> None:
+    ctx = resolved(knowledge={"02_services.md": kdoc("02_services.md", *DUPES)})
+    k = assemble(ctx=ctx).section(PromptSlot.KNOWLEDGE)
+    for body in ("Preventive", "Cosmetic", "Urgent"):
+        assert body in k.content, "every duplicate occurrence must survive"
+
+
+def test_duplicate_normalised_headings_stay_distinct() -> None:
+    ctx = resolved(knowledge={"d.md": kdoc("d.md", ("Category", "A"), ("CATEGORY", "B"))})
+    k = assemble(ctx=ctx).section(PromptSlot.KNOWLEDGE)
+    assert "## Category\n\nA" in k.content
+    assert "## CATEGORY\n\nB" in k.content, "capitalisation must not be normalised"
+
+
+def test_ordinal_addressing_selects_the_right_occurrence() -> None:
+    ctx = resolved(knowledge={"02_services.md": kdoc("02_services.md", *DUPES)})
+    bundle = assemble(ctx=ctx, token_budget=budget_returning((("02_services.md", 1),)))
+    k = bundle.section(PromptSlot.KNOWLEDGE)
+    assert k.content == "## Category\n\nCosmetic", "ordinal 1, not the first Category"
+    assert k.sources == ("projects/example_client/02_services.md#1",)
+
+
+def test_heading_levels_are_preserved() -> None:
+    ctx = resolved(knowledge={"d.md": doc("d.md", "# One\n\na\n\n### Three\n\nc")})
+    k = assemble(ctx=ctx).section(PromptSlot.KNOWLEDGE)
+    assert "# One\n\na" in k.content and "### Three\n\nc" in k.content
+
+
+def test_empty_section_renders_its_heading_only() -> None:
+    ctx = resolved(knowledge={"d.md": doc("d.md", "## Empty\n\n## Full\n\nbody")})
+    k = assemble(ctx=ctx).section(PromptSlot.KNOWLEDGE)
+    assert k.content == "## Empty\n\n## Full\n\nbody"
+
+
+def test_all_knowledge_is_selected_when_no_budget_is_injected() -> None:
+    """Phase 1 default: every section of every document."""
+    ctx = resolved(knowledge={"d.md": kdoc("d.md", ("A", "1"), ("B", "2"), ("C", "3"))})
+    k = assemble(ctx=ctx).section(PromptSlot.KNOWLEDGE)
+    assert len(k.sources) == 3
+
+
+def test_budget_raising_fail_closed_propagates() -> None:
+    """Phase 1: full Knowledge or fail closed. The assembler must not absorb it."""
+
+    class Failing:
+        def select(self, request):  # noqa: ARG002
+            raise RuntimeError("knowledge does not fit")
+
+    with pytest.raises(RuntimeError, match="does not fit"):
+        assemble(token_budget=Failing())
+
+
+def test_unresolvable_reference_invents_nothing() -> None:
+    bundle = assemble(token_budget=budget_returning((("nope.md", 0), ("01_company.md", 99))))
+    assert bundle.section(PromptSlot.KNOWLEDGE) is None
+
+
+def test_knowledge_never_falls_back_to_raw_text() -> None:
+    """raw_text carries preamble the decomposition excludes; it must not appear."""
+    ctx = resolved(knowledge={"d.md": doc("d.md", "PREAMBLE_MARKER\n\n## H\n\nbody")})
+    k = assemble(ctx=ctx).section(PromptSlot.KNOWLEDGE)
+    assert "PREAMBLE_MARKER" not in k.content, "raw_text must not be the render source"
+    assert k.content == "## H\n\nbody"
+
+
+# --- the render-and-count seam ----------------------------------------------
+class Recorder:
+    """Captures the request so tests can assert what Module 5 actually receives."""
+
+    def __init__(self):
+        self.request = None
+
+    def select(self, request):
+        self.request = request
+        return BudgetSelection(
+            knowledge_sections=tuple(
+                (n, s.ordinal) for n, d in request.knowledge.items() for s in d.sections
+            ),
+            history_window=request.conversation.history,
+        )
+
+
+def test_budget_receives_the_actual_rendered_fixed_text() -> None:
+    rec = Recorder()
+    bundle = assemble(ctx=resolved(branding={"brand.md": doc("brand.md")}), token_budget=rec)
+
+    assert rec.request is not None
+    fixed = {s.slot for s in rec.request.fixed_sections}
+    assert PromptSlot.KNOWLEDGE not in fixed, "Knowledge is the variable part"
+    assert PromptSlot.WORKFLOW in fixed, "workflow must be rendered before selection"
+    for section in rec.request.fixed_sections:
+        rendered = bundle.section(section.slot)
+        assert rendered is not None and rendered.content == section.content, (
+            "the budget manager must see the exact text that ships"
+        )
+
+
+def test_workflow_index_sentence_is_inside_the_counted_fixed_text() -> None:
+    rec = Recorder()
+    assemble(ctx=resolved(enabled=("discovery", "consultation")), token_budget=rec)
+    workflow = next(s for s in rec.request.fixed_sections if s.slot is PromptSlot.WORKFLOW)
+    assert "Other workflows available" in workflow.content
+    assert "consultation" in workflow.content
+
+
+def test_rendering_changes_change_what_the_budget_counts() -> None:
+    """Drift-proofing: alter rendered content, the counted text follows."""
+    rec_a, rec_b = Recorder(), Recorder()
+    assemble(token_budget=rec_a)
+    altered = {**core_bundle().prompts, "02_mission.md": doc("02_mission.md", "A MUCH LONGER MISSION")}
+    assemble(core=core_bundle(prompts=altered), token_budget=rec_b)
+    a = "".join(rec_a.request.fixed_text)
+    b = "".join(rec_b.request.fixed_text)
+    assert a != b and "A MUCH LONGER MISSION" in b
+
+
+def test_budget_receives_latest_message_and_conversation() -> None:
+    rec = Recorder()
+    assemble(token_budget=rec)
+    assert rec.request.latest_message == "what do you offer?"
+    assert rec.request.conversation is not None
+    assert len(rec.request.conversation.turns) == 3
+
+
+def test_history_window_comes_from_the_budget_selection() -> None:
+    only_first = (Turn(TurnRole.USER, "hello"),)
+    bundle = assemble(token_budget=budget_returning((), history=only_first))
+    assert bundle.conversation_history_window == only_first
+
+
+def test_latest_message_is_never_truncated_by_selection() -> None:
+    bundle = assemble(token_budget=budget_returning((), history=()))
+    assert bundle.latest_message == "what do you offer?"
+
+
+def test_internal_build_order_does_not_change_output_order() -> None:
+    """Workflow renders before Knowledge internally; output order is unchanged."""
+    bundle = assemble(ctx=resolved(branding={"brand.md": doc("brand.md")}))
+    assert [s.slot for s in bundle.static_sections] == list(ASSEMBLY_ORDER)
+
+
+# --- architecture boundaries -------------------------------------------------
+def test_assembler_has_no_tokenizer_dependency() -> None:
+    root = pathlib.Path(__file__).resolve().parents[2] / "runtime" / "assembler"
+    for path in root.glob("*.py"):
+        src = path.read_text(encoding="utf-8")
+        for banned in ("tiktoken", "count_tokens", "Tokenizer"):
+            assert banned not in src, f"{path.name} references {banned}"
+
+
+def test_assembler_still_parses_no_markdown() -> None:
+    root = pathlib.Path(__file__).resolve().parents[2] / "runtime" / "assembler"
+    for path in root.glob("*.py"):
+        src = path.read_text(encoding="utf-8")
+        assert "split_sections" not in src
+        assert "re.compile" not in src
+
+
+def test_seam_types_avoid_a_module_five_import_cycle() -> None:
+    """BudgetRequest/BudgetSelection live in models so Module 5 need not import Module 4."""
+    from runtime.models import budget as budget_module
+
+    src = pathlib.Path(budget_module.__file__).read_text(encoding="utf-8")
+    assert "runtime.assembler" not in src
+
+
+def test_repeated_assembly_is_deterministic_through_the_seam() -> None:
+    core, ctx, st, conv = core_bundle(), resolved(), state(), conversation()
+    a = PromptAssembler(core, token_budget=Recorder()).assemble(ctx, st, conv)
+    b = PromptAssembler(core, token_budget=Recorder()).assemble(ctx, st, conv)
+    assert a == b
