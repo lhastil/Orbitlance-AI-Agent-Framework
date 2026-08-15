@@ -66,6 +66,17 @@ def _render_section(section: Section) -> str:
     return f"{heading}{_SEPARATOR}{body}" if body else heading
 
 
+def _compose_knowledge(candidates: tuple[KnowledgeCandidate, ...]) -> str:
+    """The one place Knowledge sections are joined into slot text.
+
+    Both the string handed to the budget manager and the string placed in the
+    bundle come through here, so they cannot diverge. A second join elsewhere
+    -- even using the same separator -- would reopen exactly the gap this
+    function exists to close.
+    """
+    return _SEPARATOR.join(c.rendered_text for c in candidates if c.rendered_text)
+
+
 def _knowledge_candidates(context: ResolvedContext) -> tuple[KnowledgeCandidate, ...]:
     """Render every Knowledge section once, in document order.
 
@@ -262,7 +273,7 @@ class PromptAssembler:
         skipped rather than invented.
         """
         by_ref = {candidate.ref: candidate for candidate in candidates}
-        parts: list[str] = []
+        chosen: list[KnowledgeCandidate] = []
         sources: list[str] = []
         for ref in selected:
             candidate = by_ref.get(ref)
@@ -271,19 +282,19 @@ class PromptAssembler:
             document = context.knowledge.get(candidate.document_name)
             if document is None:
                 continue
-            parts.append(candidate.rendered_text)
+            chosen.append(candidate)
             base = _provenance(
                 document,
                 f"projects/{context.project_id}/{candidate.document_name}",
                 context.project_id,
             )
             sources.append(f"{base}#{candidate.ordinal}")
-        if not parts:
+        if not chosen:
             return None
         return PromptSection(
             slot=PromptSlot.KNOWLEDGE,
             sources=tuple(sources),
-            content=_SEPARATOR.join(parts),
+            content=_compose_knowledge(tuple(chosen)),
         )
 
     def _select(
@@ -311,6 +322,7 @@ class PromptAssembler:
                 fixed_sections=fixed,
                 latest_message=conversation.latest_user_message,
                 knowledge_candidates=candidates,
+                knowledge_text=_compose_knowledge(candidates),
                 conversation=conversation,
             )
         )

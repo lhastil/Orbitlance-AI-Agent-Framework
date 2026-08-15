@@ -28,6 +28,12 @@ hand the budget manager `raw_text`, `sections` and `section_body`, i.e. a second
 representation of the same Knowledge and a standing invitation to count the
 wrong one. Candidates are opaque text plus identity, which makes the earlier
 16.7% under-count structurally impossible rather than merely tested against.
+
+For the same reason the request carries `knowledge_text`: the assembler
+*composes* the Knowledge slot from its candidates, and that composition is its
+policy, not the budget manager's. Summing candidates would silently omit the
+joins and would be approximate regardless, since token counting is not additive
+across boundaries. The budget manager counts one opaque string.
 """
 
 from __future__ import annotations
@@ -77,6 +83,15 @@ class BudgetRequest:
     fixed_sections: tuple[PromptSection, ...]
     latest_message: str
     knowledge_candidates: tuple[KnowledgeCandidate, ...] = ()
+    #: The exact assembled Knowledge slot for the complete candidate set.
+    #:
+    #: Counting the candidates individually and adding the results is wrong
+    #: twice over: it omits the assembler's joins between sections, and token
+    #: counting is not additive across a boundary -- for any BPE tokenizer,
+    #: count(a) + count(b) != count(a + join + b). Phase 1 is all-or-nothing, so
+    #: the assembler can compose the whole slot before the budget is decided and
+    #: hand over the one string that matters.
+    knowledge_text: str = ""
     conversation: ConversationContext | None = None
 
     def __post_init__(self) -> None:
@@ -90,10 +105,6 @@ class BudgetRequest:
         """The exact rendered strings to count. No formatting is implied here."""
         return tuple(section.content for section in self.fixed_sections)
 
-    @property
-    def knowledge_text(self) -> tuple[str, ...]:
-        """The exact rendered Knowledge strings to count, in candidate order."""
-        return tuple(candidate.rendered_text for candidate in self.knowledge_candidates)
 
 
 @dataclass(frozen=True, slots=True)

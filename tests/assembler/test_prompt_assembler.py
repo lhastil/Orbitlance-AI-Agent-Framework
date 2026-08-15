@@ -816,15 +816,20 @@ def test_every_knowledge_section_arrives_as_a_rendered_candidate() -> None:
     ]
 
 
-def test_candidate_text_is_exactly_what_ships() -> None:
-    """The v1.6 invariant: counted Knowledge == shipped Knowledge, character for character."""
+def test_knowledge_text_is_exactly_what_ships() -> None:
+    """v1.7: the seam delivers the composed slot, so no test supplies the join.
+
+    The v1.6 version of this test joined the candidates with a literal "\\n\\n".
+    That proved the candidates *could* reconstruct the slot if you already knew
+    the separator — which is precisely the knowledge Module 5 is forbidden to
+    have. The assertion now reads the composed string off the request.
+    """
     rec = Recorder()
     ctx = resolved(knowledge={"d.md": kdoc("d.md", ("A", "one"), ("B", "two"))})
     bundle = assemble(ctx=ctx, token_budget=rec)
 
     shipped = bundle.section(PromptSlot.KNOWLEDGE).content
-    counted = "\n\n".join(c.rendered_text for c in rec.request.knowledge_candidates)
-    assert counted == shipped, "candidate text must equal the shipped Knowledge slot"
+    assert rec.request.knowledge_text == shipped
 
 
 def test_selected_subset_still_matches_its_candidates_exactly() -> None:
@@ -946,3 +951,126 @@ def test_candidates_are_deterministic_across_calls() -> None:
         c.ref for c in b.request.knowledge_candidates
     ]
     assert a.request.knowledge_text == b.request.knowledge_text
+    assert isinstance(a.request.knowledge_text, str)
+
+
+# --- Module 4 v1.7: the composed Knowledge slot crosses the seam -------------
+def test_budget_request_carries_the_assembled_knowledge_text() -> None:
+    rec = Recorder()
+    ctx = resolved(knowledge={"d.md": kdoc("d.md", ("A", "one"), ("B", "two"))})
+    assemble(ctx=ctx, token_budget=rec)
+
+    assert isinstance(rec.request.knowledge_text, str)
+    assert rec.request.knowledge_text, "the composed slot must not be empty here"
+
+
+def test_knowledge_text_exceeds_the_sum_of_its_candidates() -> None:
+    """The v1.6 gap in one assertion: joins are real cost the sum omits."""
+    rec = Recorder()
+    ctx = resolved(knowledge={"d.md": kdoc("d.md", ("A", "one"), ("B", "two"), ("C", "three"))})
+    assemble(ctx=ctx, token_budget=rec)
+
+    summed = sum(len(c.rendered_text) for c in rec.request.knowledge_candidates)
+    assert len(rec.request.knowledge_text) > summed
+    assert len(rec.request.knowledge_text) - summed == 2 * (
+        len(rec.request.knowledge_candidates) - 1
+    )
+
+
+def test_module_five_can_count_one_opaque_string() -> None:
+    """knowledge_text is countable directly; no candidate summation is needed."""
+    rec = Recorder()
+    ctx = resolved(knowledge={"d.md": kdoc("d.md", ("A", "one"), ("B", "two"))})
+    bundle = assemble(ctx=ctx, token_budget=rec)
+
+    def count_tokens(text: str) -> int:
+        return len(text.split())
+
+    assert count_tokens(rec.request.knowledge_text) == count_tokens(
+        bundle.section(PromptSlot.KNOWLEDGE).content
+    )
+
+
+def test_empty_knowledge_yields_empty_text_and_no_slot() -> None:
+    rec = Recorder()
+    bundle = assemble(ctx=resolved(knowledge={}), token_budget=rec)
+
+    assert rec.request.knowledge_text == ""
+    assert rec.request.knowledge_candidates == ()
+    assert bundle.section(PromptSlot.KNOWLEDGE) is None, "nothing fabricated"
+
+
+def test_knowledge_text_preserves_duplicate_occurrences() -> None:
+    rec = Recorder()
+    ctx = resolved(knowledge={"02_services.md": kdoc("02_services.md", *DUPES)})
+    assemble(ctx=ctx, token_budget=rec)
+
+    for body in ("Preventive", "Cosmetic", "Urgent"):
+        assert body in rec.request.knowledge_text
+    assert rec.request.knowledge_text.count("Category") >= 2
+
+
+# --- CRITICAL DRIFT TESTS ----------------------------------------------------
+def test_changing_the_knowledge_separator_changes_knowledge_text(monkeypatch) -> None:
+    """Composition drift must reach the seam automatically.
+
+    Repointing the assembler's separator must change the composed string handed
+    to the budget manager. If it did not, a future formatting change could
+    silently invalidate the budget while the check still reported success.
+    """
+    from runtime.assembler import prompt_assembler as pa
+
+    rec_before = Recorder()
+    ctx = resolved(knowledge={"d.md": kdoc("d.md", ("A", "one"), ("B", "two"))})
+    bundle_before = assemble(ctx=ctx, token_budget=rec_before)
+
+    monkeypatch.setattr(pa, "_SEPARATOR", "\n\n<<SEP>>\n\n")
+    rec_after = Recorder()
+    bundle_after = assemble(ctx=ctx, token_budget=rec_after)
+
+    assert rec_after.request.knowledge_text != rec_before.request.knowledge_text
+    assert "<<SEP>>" in rec_after.request.knowledge_text
+    assert rec_after.request.knowledge_text == bundle_after.section(
+        PromptSlot.KNOWLEDGE
+    ).content, "composed text and shipped text must still agree after the change"
+    assert "<<SEP>>" not in bundle_before.section(PromptSlot.KNOWLEDGE).content
+
+
+def test_changing_heading_rendering_changes_knowledge_text(monkeypatch) -> None:
+    from runtime.assembler import prompt_assembler as pa
+
+    original = pa._render_section
+    rec_before = Recorder()
+    ctx = resolved(knowledge={"d.md": kdoc("d.md", ("A", "one"))})
+    assemble(ctx=ctx, token_budget=rec_before)
+
+    monkeypatch.setattr(pa, "_render_section", lambda s: "<<H>> " + original(s))
+    rec_after = Recorder()
+    bundle_after = assemble(ctx=ctx, token_budget=rec_after)
+
+    assert "<<H>>" in rec_after.request.knowledge_text
+    assert rec_after.request.knowledge_text != rec_before.request.knowledge_text
+    assert rec_after.request.knowledge_text == bundle_after.section(
+        PromptSlot.KNOWLEDGE
+    ).content
+
+
+def test_single_composition_path_is_used_for_both() -> None:
+    """One join implementation only: the seam text and the slot come from it."""
+    from runtime.assembler import prompt_assembler as pa
+
+    src = pathlib.Path(pa.__file__).read_text(encoding="utf-8")
+    assert src.count("_SEPARATOR.join") == 3, (
+        "guardrails, branding and _compose_knowledge — Knowledge must not join twice"
+    )
+    assert "def _compose_knowledge" in src
+
+
+def test_separator_exists_only_in_module_four() -> None:
+    root = pathlib.Path(__file__).resolve().parents[2] / "runtime"
+    for path in root.rglob("*.py"):
+        if "__pycache__" in str(path) or path.name == "prompt_assembler.py":
+            continue
+        src = path.read_text(encoding="utf-8")
+        assert "_SEPARATOR" not in src, f"{path.name} knows the separator"
+        assert "_compose_knowledge" not in src, f"{path.name} knows the composition"
