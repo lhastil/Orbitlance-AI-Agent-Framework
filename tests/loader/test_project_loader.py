@@ -292,3 +292,128 @@ def test_absent_provider_label_is_none_not_empty_string() -> None:
     config = config_parser.parse_config("## LLM Provider\n\n- **Primary:** anthropic\n")
     assert config.llm_provider.primary == "anthropic"
     assert config.llm_provider.model is None
+
+
+# --- lossless Knowledge decomposition (Module 2 amendment) -------------------
+"""These cover the defect that `ProjectDocument.sections` was a lookup index
+being treated as a rendering source: duplicates collapsed, heading text was
+casefolded, heading level was dropped and preamble was discarded."""
+
+from runtime.loader import markdown  # noqa: E402
+from runtime.models.project_context import Section  # noqa: E402
+
+DUPLICATED = """Intro prose before any heading.
+
+## Category
+
+Preventive Care
+
+## Category
+
+Cosmetic
+
+## Category
+
+Urgent Care
+"""
+
+
+def test_duplicate_headings_are_preserved_as_distinct_occurrences() -> None:
+    parsed = markdown.split_sections(DUPLICATED)
+    assert len(parsed.sections) == 3, "duplicate headings must not collapse"
+    assert [s.body for s in parsed.sections] == [
+        "Preventive Care",
+        "Cosmetic",
+        "Urgent Care",
+    ]
+
+
+def test_preamble_before_the_first_heading_is_preserved() -> None:
+    assert markdown.split_sections(DUPLICATED).preamble == "Intro prose before any heading."
+
+
+def test_original_heading_capitalisation_is_preserved_verbatim() -> None:
+    parsed = markdown.split_sections("# Company — Sunrise Dental Clinic\n\nbody\n")
+    assert parsed.sections[0].heading == "Company — Sunrise Dental Clinic"
+    assert parsed.sections[0].heading != parsed.sections[0].heading.casefold(), (
+        "the parser must not store a casefolded heading"
+    )
+
+
+def test_heading_level_is_preserved() -> None:
+    parsed = markdown.split_sections("# One\n\na\n\n## Two\n\nb\n\n### Three\n\nc\n")
+    assert [s.level for s in parsed.sections] == [1, 2, 3]
+
+
+def test_empty_section_is_a_record_with_an_empty_body() -> None:
+    parsed = markdown.split_sections("## Empty\n\n## Next\n\nbody\n")
+    assert parsed.sections[0].body == ""
+    assert len(parsed.sections) == 2
+
+
+def test_heading_only_document() -> None:
+    parsed = markdown.split_sections("## Only\n")
+    assert parsed.preamble == ""
+    assert len(parsed.sections) == 1 and parsed.sections[0].body == ""
+
+
+def test_document_with_no_headings_is_all_preamble() -> None:
+    parsed = markdown.split_sections("Just prose, no headings at all.\n")
+    assert parsed.sections == ()
+    assert parsed.preamble == "Just prose, no headings at all."
+
+
+def test_unicode_headings_are_untouched() -> None:
+    parsed = markdown.split_sections("## Zahnärztliche Behandlung — 治療\n\nbody\n")
+    assert parsed.sections[0].heading == "Zahnärztliche Behandlung — 治療"
+
+
+def test_ordinals_are_contiguous_zero_based_and_deterministic(tmp_path) -> None:
+    loader = build_project(tmp_path, dirs={"knowledge": {"01_company.md": DUPLICATED}})
+    first = loader.load("example_client").knowledge.documents["01_company.md"]
+    second = loader.load("example_client").knowledge.documents["01_company.md"]
+
+    assert [s.ordinal for s in first.sections] == [0, 1, 2]
+    assert [s.ordinal for s in second.sections] == [0, 1, 2]
+    assert first.sections == second.sections, "decomposition must be deterministic"
+
+
+def test_sections_are_addressable_by_ordinal(tmp_path) -> None:
+    loader = build_project(tmp_path, dirs={"knowledge": {"01_company.md": DUPLICATED}})
+    doc = loader.load("example_client").knowledge.documents["01_company.md"]
+
+    assert doc.section(1) is not None and doc.section(1).body == "Cosmetic"
+    assert doc.section(99) is None
+
+
+def test_derived_lookup_is_first_occurrence_wins(tmp_path) -> None:
+    """Matches the policy freeze_sections documents; the old dict() was last-wins."""
+    loader = build_project(tmp_path, dirs={"knowledge": {"01_company.md": DUPLICATED}})
+    doc = loader.load("example_client").knowledge.documents["01_company.md"]
+
+    assert doc.has_section("Category")
+    assert doc.section_body("Category") == "Preventive Care", "first occurrence must win"
+    assert doc.section_body("category") == "Preventive Care", "lookup is normalised"
+    assert len(doc.sections_named("Category")) == 3, "all occurrences remain reachable"
+
+
+def test_duplicate_normalised_headings_do_not_collide(tmp_path) -> None:
+    text = "## Category\n\nA\n\n## CATEGORY\n\nB\n\n## category\n\nC\n"
+    loader = build_project(tmp_path, dirs={"knowledge": {"01_company.md": text}})
+    doc = loader.load("example_client").knowledge.documents["01_company.md"]
+
+    assert len(doc.sections) == 3
+    assert [s.heading_text for s in doc.sections] == ["Category", "CATEGORY", "category"]
+    assert [s.body for s in doc.sections] == ["A", "B", "C"]
+
+
+def test_raw_text_remains_byte_exact(tmp_path) -> None:
+    loader = build_project(tmp_path, dirs={"knowledge": {"01_company.md": DUPLICATED}})
+    doc = loader.load("example_client").knowledge.documents["01_company.md"]
+    assert doc.raw_text == DUPLICATED, "raw_text must be the untouched source"
+
+
+def test_section_model_exposes_lookup_form_without_storing_it() -> None:
+    section = Section(ordinal=0, heading_text="Company Overview", heading_level=2, body="b")
+    assert section.heading_text == "Company Overview"
+    assert section.normalised_heading == "company overview"

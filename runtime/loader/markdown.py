@@ -14,6 +14,7 @@ knowledge, or any framework concept. Meaning is applied one layer up, in
 from __future__ import annotations
 
 import re
+from typing import NamedTuple
 
 # A setext-free subset: only ATX headings ("## Title") are recognised, which is
 # what every template and project in the framework uses.
@@ -37,23 +38,61 @@ def normalise_heading(title: str) -> str:
     return title.strip().lstrip("#").strip().casefold()
 
 
-def split_sections(text: str) -> tuple[tuple[str, str], ...]:
-    """Split Markdown into ``(normalised heading, body)`` pairs, in order.
+class ParsedSection(NamedTuple):
+    """One heading occurrence and the body that follows it.
 
-    Content appearing before the first heading is discarded: it belongs to no
-    section, and inventing a synthetic one would create a heading that does not
-    exist in the document.
+    `heading` is the **original text, verbatim** -- not normalised and not
+    casefolded. `normalise_heading` exists for lookup, never for storage: an
+    earlier revision stored the normalised form and the original capitalisation
+    became unrecoverable.
+    """
 
-    Order is preserved and duplicates are kept, so callers decide how to handle
-    a repeated heading rather than having the parser silently choose.
+    level: int
+    heading: str
+    body: str
+
+
+class ParsedDocument(NamedTuple):
+    """A document split into its preamble and every heading occurrence.
+
+    Lossless with respect to content: every heading occurrence is a separate
+    entry, so a repeated heading yields repeated entries rather than one
+    surviving winner. Callers decide how to handle repetition; this parser never
+    silently chooses.
+    """
+
+    preamble: str
+    sections: tuple[ParsedSection, ...]
+
+
+def split_sections(text: str) -> ParsedDocument:
+    """Split Markdown into its preamble and ordered heading occurrences.
+
+    Preserves, for every occurrence: the original heading text, the heading
+    level (the `#` count), the body, document order, and repetition. Content
+    appearing before the first heading is returned as `preamble` rather than
+    discarded -- an earlier revision dropped it, which silently lost any
+    document that opened with prose.
+
+    The only normalisation applied is `.strip()` on bodies and preamble, which
+    this parser already applied and which the Prompt Assembler independently
+    applies when rendering. Nothing else about the text is altered.
     """
     matches = list(_HEADING_RE.finditer(text))
-    sections: list[tuple[str, str]] = []
+    preamble = (text[: matches[0].start()] if matches else text).strip()
+
+    sections: list[ParsedSection] = []
     for index, match in enumerate(matches):
         start = match.end()
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        sections.append((normalise_heading(match.group("title")), text[start:end].strip()))
-    return tuple(sections)
+        sections.append(
+            ParsedSection(
+                level=len(match.group("hashes")),
+                heading=match.group("title"),
+                body=text[start:end].strip(),
+            )
+        )
+    return ParsedDocument(preamble=preamble, sections=tuple(sections))
 
 
 def strip_inline_markup(value: str) -> str:

@@ -43,6 +43,7 @@ from runtime.models.project_context import (
     ExtensionPoint,
     ProjectContext,
     ProjectDocument,
+    Section,
 )
 
 #: The three directory extension points, and the config file. Names come from
@@ -151,12 +152,22 @@ class ProjectLoader:
             return ProjectDocument.missing(name, relative_path)
 
         text = self._source.read_document(project_id, relative_path)
+        parsed = markdown.split_sections(text)
         return ProjectDocument(
             name=name,
             relative_path=relative_path,
             exists=True,
             raw_text=text,
-            sections=dict(markdown.split_sections(text)),
+            sections=tuple(
+                Section(
+                    ordinal=ordinal,
+                    heading_text=parsed_section.heading,
+                    heading_level=parsed_section.level,
+                    body=parsed_section.body,
+                )
+                for ordinal, parsed_section in enumerate(parsed.sections)
+            ),
+            preamble=parsed.preamble,
         )
 
     # -- guards -------------------------------------------------------------

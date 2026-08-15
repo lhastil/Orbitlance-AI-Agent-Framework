@@ -28,10 +28,12 @@ def parse_config(text: str) -> ProjectConfig:
     only when a document cannot be read at all.
     """
     recognised: list[tuple[str, str]] = []
-    for heading, body in markdown.split_sections(text):
-        canonical = schema.canonical_section(heading)
+    for parsed_section in markdown.split_sections(text).sections:
+        canonical = schema.canonical_section(
+            markdown.normalise_heading(parsed_section.heading)
+        )
         if canonical is not None:
-            recognised.append((canonical, body))
+            recognised.append((canonical, parsed_section.body))
 
     sections = freeze_sections(recognised)
 

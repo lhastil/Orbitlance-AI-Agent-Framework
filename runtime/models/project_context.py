@@ -24,27 +24,62 @@ from types import MappingProxyType
 from runtime.models.project_config import ProjectConfig
 
 
-def _freeze(mapping: Mapping[str, str] | None) -> Mapping[str, str]:
-    return MappingProxyType(dict(mapping or {}))
+@dataclass(frozen=True, slots=True)
+class Section:
+    """One heading occurrence in a document, addressable by ordinal.
+
+    Identity is `(document name, ordinal)` — never the heading. Headings repeat
+    legitimately: `02_services.md` contains `Category` five times, once per
+    service. Keying by heading collapsed four of the five, so identity is
+    positional and the heading is an attribute.
+
+    `heading_text` is the original text verbatim, and `heading_level` the `#`
+    count. Both were previously discarded, making the original capitalisation
+    and document structure unrecoverable.
+    """
+
+    ordinal: int
+    heading_text: str
+    heading_level: int
+    body: str
+
+    @property
+    def normalised_heading(self) -> str:
+        """Lookup form. Derived on demand — never stored in place of the original."""
+        return _normalise(self.heading_text)
 
 
 @dataclass(frozen=True, slots=True)
 class ProjectDocument:
     """One markdown document belonging to a project.
 
-    `sections` maps a normalised heading (lower-cased, stripped) to its body
-    text, so rules can ask "does this document declare section X?" without
-    re-parsing markdown themselves.
+    `sections` is the **authoritative, lossless, ordered decomposition**: every
+    heading occurrence in document order, duplicates included. `preamble` holds
+    any content before the first heading.
+
+    It replaced a `Mapping[str, str]` keyed on normalised headings, which was
+    built for lookup and could not represent a document faithfully — duplicate
+    headings collapsed, heading text was casefolded, heading level was dropped
+    and preamble was discarded, losing 27.8% of the reference project's
+    Knowledge. `has_section` and `section_body` remain as **derived**
+    conveniences over this sequence; there is deliberately no second mapping
+    kept alongside it, so the two cannot drift.
+
+    `raw_text` is unchanged and remains byte-exact — it is the authoritative
+    record from which this decomposition is derived, and the source every
+    byte-sensitive consumer (secret scanning and its line numbers, client-content
+    patterns) already reads.
     """
 
     name: str
     relative_path: str
     exists: bool = False
     raw_text: str = ""
-    sections: Mapping[str, str] = field(default_factory=dict)
+    sections: tuple[Section, ...] = ()
+    preamble: str = ""
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "sections", _freeze(self.sections))
+        object.__setattr__(self, "sections", tuple(self.sections))
 
     @classmethod
     def missing(cls, name: str, relative_path: str) -> ProjectDocument:
@@ -54,11 +89,36 @@ class ProjectDocument:
     def is_empty(self) -> bool:
         return not self.raw_text.strip()
 
+    def section(self, ordinal: int) -> Section | None:
+        """The section at `ordinal`, or None. The authoritative addressing mode."""
+        for candidate in self.sections:
+            if candidate.ordinal == ordinal:
+                return candidate
+        return None
+
+    def sections_named(self, title: str) -> tuple[Section, ...]:
+        """Every occurrence of a heading, in document order.
+
+        The honest answer when a heading repeats — `section_body` can only
+        return one.
+        """
+        key = _normalise(title)
+        return tuple(s for s in self.sections if s.normalised_heading == key)
+
     def has_section(self, title: str) -> bool:
-        return _normalise(title) in self.sections
+        return bool(self.sections_named(title))
 
     def section_body(self, title: str) -> str:
-        return self.sections.get(_normalise(title), "")
+        """The body of the **first** occurrence, or "" when absent.
+
+        First-wins matches the policy `freeze_sections` already documents: a
+        duplicated heading must not let later content silently replace what an
+        earlier consumer reasoned about. The previous `dict()` construction was
+        last-wins, contradicting that rule. Use `sections_named` when a document
+        may legitimately repeat a heading.
+        """
+        found = self.sections_named(title)
+        return found[0].body if found else ""
 
 
 @dataclass(frozen=True, slots=True)
