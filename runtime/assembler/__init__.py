@@ -18,7 +18,12 @@ from runtime.assembler.errors import (
 )
 from runtime.assembler.ports import TokenBudgetPort
 from runtime.assembler.prompt_assembler import PromptAssembler
-from runtime.models.budget import BudgetRequest, BudgetSelection, SectionRef
+from runtime.models.budget import (
+    BudgetRequest,
+    BudgetSelection,
+    KnowledgeCandidate,
+    SectionRef,
+)
 from runtime.models.prompt_bundle import (
     ASSEMBLY_ORDER,
     PromptBundle,
@@ -30,6 +35,7 @@ __all__ = [
     "ASSEMBLY_ORDER",
     "BudgetRequest",
     "BudgetSelection",
+    "KnowledgeCandidate",
     "SectionRef",
     "AssemblerError",
     "PlaybookLeakError",

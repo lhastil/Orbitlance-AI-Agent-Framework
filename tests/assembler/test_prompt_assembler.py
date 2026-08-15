@@ -707,9 +707,7 @@ class Recorder:
     def select(self, request):
         self.request = request
         return BudgetSelection(
-            knowledge_sections=tuple(
-                (n, s.ordinal) for n, d in request.knowledge.items() for s in d.sections
-            ),
+            knowledge_sections=tuple(c.ref for c in request.knowledge_candidates),
             history_window=request.conversation.history,
         )
 
@@ -803,3 +801,148 @@ def test_repeated_assembly_is_deterministic_through_the_seam() -> None:
     a = PromptAssembler(core, token_budget=Recorder()).assemble(ctx, st, conv)
     b = PromptAssembler(core, token_budget=Recorder()).assemble(ctx, st, conv)
     assert a == b
+
+
+# --- Module 4 v1.6: Knowledge crosses the seam already rendered --------------
+def test_every_knowledge_section_arrives_as_a_rendered_candidate() -> None:
+    rec = Recorder()
+    ctx = resolved(knowledge={"d.md": kdoc("d.md", ("A", "one"), ("B", "two"))})
+    assemble(ctx=ctx, token_budget=rec)
+
+    assert [c.ref for c in rec.request.knowledge_candidates] == [("d.md", 0), ("d.md", 1)]
+    assert [c.rendered_text for c in rec.request.knowledge_candidates] == [
+        "## A\n\none",
+        "## B\n\ntwo",
+    ]
+
+
+def test_candidate_text_is_exactly_what_ships() -> None:
+    """The v1.6 invariant: counted Knowledge == shipped Knowledge, character for character."""
+    rec = Recorder()
+    ctx = resolved(knowledge={"d.md": kdoc("d.md", ("A", "one"), ("B", "two"))})
+    bundle = assemble(ctx=ctx, token_budget=rec)
+
+    shipped = bundle.section(PromptSlot.KNOWLEDGE).content
+    counted = "\n\n".join(c.rendered_text for c in rec.request.knowledge_candidates)
+    assert counted == shipped, "candidate text must equal the shipped Knowledge slot"
+
+
+def test_selected_subset_still_matches_its_candidates_exactly() -> None:
+    ctx = resolved(knowledge={"d.md": kdoc("d.md", ("A", "one"), ("B", "two"), ("C", "three"))})
+    rec = Recorder()
+    assemble(ctx=ctx, token_budget=rec)
+    chosen = rec.request.knowledge_candidates[1]
+
+    bundle = assemble(ctx=ctx, token_budget=budget_returning((chosen.ref,)))
+    assert bundle.section(PromptSlot.KNOWLEDGE).content == chosen.rendered_text
+
+
+def test_candidates_preserve_duplicate_headings_distinctly() -> None:
+    rec = Recorder()
+    ctx = resolved(knowledge={"02_services.md": kdoc("02_services.md", *DUPES)})
+    assemble(ctx=ctx, token_budget=rec)
+
+    cands = rec.request.knowledge_candidates
+    assert [c.ordinal for c in cands] == [0, 1, 2]
+    assert len({c.rendered_text for c in cands}) == 3, "duplicates must not collapse"
+    assert "## Category\n\nPreventive" in cands[0].rendered_text
+    assert "## CATEGORY\n\nUrgent" in cands[2].rendered_text
+
+
+def test_candidates_preserve_heading_levels() -> None:
+    rec = Recorder()
+    assemble(ctx=resolved(knowledge={"d.md": doc("d.md", "# One\n\na\n\n### Three\n\nc")}),
+             token_budget=rec)
+    assert [c.rendered_text for c in rec.request.knowledge_candidates] == [
+        "# One\n\na",
+        "### Three\n\nc",
+    ]
+
+
+def test_empty_section_candidate_carries_its_heading() -> None:
+    rec = Recorder()
+    assemble(ctx=resolved(knowledge={"d.md": doc("d.md", "## Empty\n\n## Full\n\nbody")}),
+             token_budget=rec)
+    assert [c.rendered_text for c in rec.request.knowledge_candidates] == [
+        "## Empty",
+        "## Full\n\nbody",
+    ]
+
+
+def test_candidates_span_multiple_documents_in_order() -> None:
+    rec = Recorder()
+    ctx = resolved(knowledge={"a.md": kdoc("a.md", ("A", "1")), "b.md": kdoc("b.md", ("B", "2"))})
+    assemble(ctx=ctx, token_budget=rec)
+    assert [c.ref for c in rec.request.knowledge_candidates] == [("a.md", 0), ("b.md", 0)]
+
+
+def test_heading_format_change_propagates_into_the_candidates() -> None:
+    """The regression the previous gap hid: rendering drift must reach budgeting."""
+    rec_a, rec_b = Recorder(), Recorder()
+    assemble(ctx=resolved(knowledge={"d.md": kdoc("d.md", ("Short", "x"))}), token_budget=rec_a)
+    assemble(
+        ctx=resolved(knowledge={"d.md": kdoc("d.md", ("A Very Much Longer Heading", "x"))}),
+        token_budget=rec_b,
+    )
+    a = rec_a.request.knowledge_candidates[0].rendered_text
+    b = rec_b.request.knowledge_candidates[0].rendered_text
+    assert a != b and len(b) > len(a)
+    assert "A Very Much Longer Heading" in b
+
+
+def test_body_only_accounting_would_undercount() -> None:
+    """Guards the specific defect: bodies alone are not the rendered cost."""
+    rec = Recorder()
+    ctx = resolved(knowledge={"d.md": kdoc("d.md", ("Heading One", "b"), ("Heading Two", "b"))})
+    assemble(ctx=ctx, token_budget=rec)
+
+    rendered = sum(len(c.rendered_text) for c in rec.request.knowledge_candidates)
+    bodies = sum(len(s.body) for d in ctx.knowledge.values() for s in d.sections)
+    assert rendered > bodies, "headings and separators are part of the real cost"
+
+
+def test_request_exposes_no_project_documents() -> None:
+    """Module 5 must not be able to reach raw_text, sections or section_body."""
+    rec = Recorder()
+    assemble(token_budget=rec)
+    assert not hasattr(rec.request, "knowledge")
+    for field in ("raw_text", "sections", "section_body", "preamble"):
+        assert not hasattr(rec.request.knowledge_candidates[0], field)
+
+
+def test_knowledge_is_rendered_exactly_once() -> None:
+    """Candidates are reused when assembling; nothing is re-rendered."""
+    rec = Recorder()
+    ctx = resolved(knowledge={"d.md": kdoc("d.md", ("A", "one"), ("B", "two"))})
+    bundle = assemble(ctx=ctx, token_budget=rec)
+    for candidate in rec.request.knowledge_candidates:
+        assert candidate.rendered_text in bundle.section(PromptSlot.KNOWLEDGE).content
+
+
+def test_candidate_identity_is_ordinal_not_heading() -> None:
+    rec = Recorder()
+    assemble(ctx=resolved(knowledge={"02_services.md": kdoc("02_services.md", *DUPES)}),
+             token_budget=rec)
+    refs = [c.ref for c in rec.request.knowledge_candidates]
+    assert refs == [("02_services.md", 0), ("02_services.md", 1), ("02_services.md", 2)]
+    assert len(set(refs)) == 3, "identity must stay unique despite repeated headings"
+
+
+def test_seam_remains_free_of_module_four_imports() -> None:
+    from runtime.models import budget as budget_module
+
+    src = pathlib.Path(budget_module.__file__).read_text(encoding="utf-8")
+    assert "runtime.assembler" not in src
+    assert "import ProjectDocument" not in src, "candidates are opaque text plus identity"
+    assert not hasattr(budget_module.BudgetRequest, "knowledge")
+
+
+def test_candidates_are_deterministic_across_calls() -> None:
+    ctx = resolved()
+    a, b = Recorder(), Recorder()
+    assemble(ctx=ctx, token_budget=a)
+    assemble(ctx=ctx, token_budget=b)
+    assert [c.ref for c in a.request.knowledge_candidates] == [
+        c.ref for c in b.request.knowledge_candidates
+    ]
+    assert a.request.knowledge_text == b.request.knowledge_text

@@ -32,7 +32,12 @@ from collections.abc import Mapping
 from runtime.assembler import core_slots as slots
 from runtime.assembler.errors import PlaybookLeakError, UnknownWorkflowError
 from runtime.assembler.ports import TokenBudgetPort
-from runtime.models.budget import BudgetRequest, BudgetSelection, SectionRef
+from runtime.models.budget import (
+    BudgetRequest,
+    BudgetSelection,
+    KnowledgeCandidate,
+    SectionRef,
+)
 from runtime.models.conversation import ConversationContext, Turn, WorkflowState
 from runtime.models.core_bundle import CoreBundle
 from runtime.models.project_context import ProjectDocument, Section
@@ -61,14 +66,23 @@ def _render_section(section: Section) -> str:
     return f"{heading}{_SEPARATOR}{body}" if body else heading
 
 
-def _every_section(context: ResolvedContext) -> tuple[SectionRef, ...]:
-    """Every section of every live Knowledge document, in document order."""
-    return tuple(
-        (name, section.ordinal)
-        for name, document in context.knowledge.items()
-        if document.exists and not document.is_empty
-        for section in document.sections
-    )
+def _knowledge_candidates(context: ResolvedContext) -> tuple[KnowledgeCandidate, ...]:
+    """Render every Knowledge section once, in document order.
+
+    Phase 1 is all-or-nothing, so the candidate set is the whole set. Rendering
+    here — before the budget manager is consulted — is what lets it count the
+    exact text that will ship, and the same strings are reused when the slot is
+    assembled. Empty renders are dropped so a candidate always carries content.
+    """
+    candidates: list[KnowledgeCandidate] = []
+    for name, document in context.knowledge.items():
+        if not document.exists or document.is_empty:
+            continue
+        for section in document.sections:
+            rendered = _render_section(section)
+            if rendered:
+                candidates.append(KnowledgeCandidate(name, section.ordinal, rendered))
+    return tuple(candidates)
 
 
 def _provenance(
@@ -169,8 +183,11 @@ class PromptAssembler:
             if section is not None:
                 fixed[slot] = section
 
-        selection = self._select(context, conversation, tuple(fixed.values()))
-        knowledge = self._knowledge(context, selection.knowledge_sections)
+        candidates = _knowledge_candidates(context)
+        selection = self._select(
+            context, conversation, tuple(fixed.values()), candidates
+        )
+        knowledge = self._knowledge(context, candidates, selection.knowledge_sections)
 
         rendered = dict(fixed)
         if knowledge is not None:
@@ -226,38 +243,41 @@ class PromptAssembler:
         )
 
     def _knowledge(
-        self, context: ResolvedContext, selected: tuple[SectionRef, ...]
+        self,
+        context: ResolvedContext,
+        candidates: tuple[KnowledgeCandidate, ...],
+        selected: tuple[SectionRef, ...],
     ) -> PromptSection | None:
-        """Render exactly the selected sections, addressed by ordinal.
+        """Assemble the Knowledge slot from the **already-rendered** candidates.
 
-        `raw_text` is deliberately not consulted here. Knowledge is rendered from
-        the Loader's lossless decomposition, so a document contributes only its
-        selected sections and duplicate headings stay distinct — the Loader
-        remains the sole Markdown parser and nothing is reconstructed.
+        Nothing is rendered a second time here. Each candidate was rendered once,
+        handed to the budget manager to count, and the identical string is reused
+        now — so what was counted and what ships cannot diverge. Re-rendering,
+        even with the same function, would reopen that gap the moment the two
+        paths differed.
 
-        `section_body(title)` is unusable for this: it is first-occurrence lookup
-        and cannot address the second `Category` in a document that has five. An
-        unresolvable reference is skipped rather than invented.
+        `raw_text` is never consulted, and `section_body(title)` is unusable
+        anyway: it is first-occurrence lookup and cannot address the second
+        `Category` in a document that has five. An unresolvable reference is
+        skipped rather than invented.
         """
+        by_ref = {candidate.ref: candidate for candidate in candidates}
         parts: list[str] = []
         sources: list[str] = []
-        for document_name, ordinal in selected:
-            document = context.knowledge.get(document_name)
-            if document is None or not document.exists:
+        for ref in selected:
+            candidate = by_ref.get(ref)
+            if candidate is None or not candidate.rendered_text:
                 continue
-            section = document.section(ordinal)
-            if section is None:
+            document = context.knowledge.get(candidate.document_name)
+            if document is None:
                 continue
-            rendered = _render_section(section)
-            if not rendered:
-                continue
-            parts.append(rendered)
+            parts.append(candidate.rendered_text)
             base = _provenance(
                 document,
-                f"projects/{context.project_id}/{document_name}",
+                f"projects/{context.project_id}/{candidate.document_name}",
                 context.project_id,
             )
-            sources.append(f"{base}#{ordinal}")
+            sources.append(f"{base}#{candidate.ordinal}")
         if not parts:
             return None
         return PromptSection(
@@ -271,11 +291,18 @@ class PromptAssembler:
         context: ResolvedContext,
         conversation: ConversationContext,
         fixed: tuple[PromptSection, ...],
+        candidates: tuple[KnowledgeCandidate, ...],
     ) -> BudgetSelection:
-        """Ask the budget manager what fits, handing it the real rendered text."""
+        """Ask the budget manager what fits, handing it the real rendered text.
+
+        Both halves cross the seam already rendered — fixed sections and
+        Knowledge candidates alike — so the budget manager counts literal
+        strings and never models this module's formatting.
+        """
         if self._budget is None:
             return BudgetSelection(
-                knowledge_sections=_every_section(context),  # Phase 1: all of them.
+                # Phase 1: all of them.
+                knowledge_sections=tuple(c.ref for c in candidates),
                 history_window=conversation.history,
             )
         return self._budget.select(
@@ -283,7 +310,7 @@ class PromptAssembler:
                 project_id=context.project_id,
                 fixed_sections=fixed,
                 latest_message=conversation.latest_user_message,
-                knowledge=context.knowledge,
+                knowledge_candidates=candidates,
                 conversation=conversation,
             )
         )
