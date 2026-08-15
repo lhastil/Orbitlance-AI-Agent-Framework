@@ -10,6 +10,11 @@ This follows the pattern already established twice in the runtime —
 Prompt Assembler — where a module declares what it needs of a collaborator that
 does not exist yet.
 
+`ProviderCapabilities` is the shared model in `runtime/models/`, not a type
+this module defines: concrete adapters produce it and the frozen Provider
+Interface contract returns it, so one authoritative capability model serves
+both sides. This module consumes only the two fields budgeting needs.
+
 **There is deliberately no default implementation of either port.** A tokenizer
 that guesses, or a capability query that assumes a window size, would let the
 budget report success without ever measuring anything — the fail-open class of
@@ -19,29 +24,9 @@ failure, not a degraded mode.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-
-@dataclass(frozen=True, slots=True)
-class ProviderCapabilities:
-    """What the budget needs to know about the target provider.
-
-    `serialization_reserve` is the provider adapter's **declared** envelope cost
-    — role markers, message framing, whatever wrapping it applies around content
-    this module never sees. It is declared rather than measured because the
-    adapter owns serialization; Provider Interface rule 10 already makes a
-    provider that misreports its capabilities a conformance failure.
-    """
-
-    context_window: int
-    serialization_reserve: int
-
-    def __post_init__(self) -> None:
-        if self.context_window <= 0:
-            raise ValueError("context_window must be positive")
-        if self.serialization_reserve < 0:
-            raise ValueError("serialization_reserve cannot be negative")
+from runtime.models.provider import ProviderCapabilities
 
 
 @runtime_checkable

@@ -1,0 +1,249 @@
+"""The shared provider conformance suite.
+
+Specification §9.10 requires every concrete adapter to pass a shared suite before
+registration. This is that suite, written once so that each future adapter runs
+the same checks rather than defining its own — an adapter that supplies its own
+notion of correctness is not conforming to anything.
+
+It is provider-neutral and needs no real provider: it runs against any object
+satisfying `ProviderInterface`, including a fake. It is built **before** the
+first adapter deliberately, so the first adapter is validated by a suite that
+already exists rather than one written around it.
+
+**What this suite can and cannot check.** §9.6 exposes two members, so the suite
+verifies everything observable through them: capability validity, stability and
+truthfulness, response normalisation, error normalisation, immutability of the
+caller's bundle, and fail-closed overflow. It cannot inspect an adapter's
+serialized payload, because serialization format is exactly the provider-specific
+detail the interface exists to hide — so "content preservation" is checked as
+*the adapter did not modify what it was given*, which is neutral and meaningful,
+rather than by reaching into a payload the suite would have to understand.
+
+Each check is independent and raises `ConformanceError` naming what went
+wrong. `run_conformance` collects every failure rather than stopping at the
+first, so an adapter author sees the whole picture in one run.
+"""
+
+from __future__ import annotations
+
+import contextlib
+from collections.abc import Callable
+from dataclasses import dataclass, field
+
+from runtime.models.conversation import Turn, TurnRole
+from runtime.models.prompt_bundle import PromptBundle, PromptSection, PromptSlot
+from runtime.models.provider import (
+    ProviderCapabilities,
+    ProviderErrorType,
+    ProviderResponse,
+)
+from runtime.provider.errors import ContextWindowExceededError, ProviderError
+from runtime.provider.ports import ProviderInterface
+
+
+class ConformanceError(Exception):
+    """One conformance requirement an adapter did not meet."""
+
+
+@dataclass(frozen=True, slots=True)
+class ConformanceReport:
+    """Outcome of a conformance run."""
+
+    checks_run: tuple[str, ...] = ()
+    failures: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def passed(self) -> bool:
+        return not self.failures
+
+    def raise_if_failed(self) -> None:
+        if self.failures:
+            raise ConformanceError(
+                f"{len(self.failures)} conformance failure(s):\n  - "
+                + "\n  - ".join(self.failures)
+            )
+
+
+# --- fixtures the suite drives adapters with ---------------------------------
+def sample_bundle(content: str = "system content") -> PromptBundle:
+    """A minimal, well-formed bundle. Deliberately provider-neutral."""
+    return PromptBundle(
+        project_id="conformance",
+        conversation_id="conformance-1",
+        static_sections=(
+            PromptSection(
+                slot=PromptSlot.CORE_PERSONALITY,
+                sources=("core/prompts/01_core_personality.md",),
+                content=content,
+            ),
+        ),
+        conversation_history_window=(Turn(TurnRole.USER, "earlier"),),
+        latest_message="hello",
+    )
+
+
+def sample_history() -> tuple[Turn, ...]:
+    return (Turn(TurnRole.USER, "earlier"), Turn(TurnRole.AGENT, "reply"))
+
+
+def oversized_bundle(capabilities: ProviderCapabilities) -> PromptBundle:
+    """A bundle that cannot fit, whatever the adapter's serialization costs.
+
+    Sized from the declared window rather than a fixed constant, so the check
+    holds for a small model and a large one alike.
+    """
+    filler = "token " * (capabilities.context_window + 1_000)
+    return sample_bundle(filler)
+
+
+# --- individual checks --------------------------------------------------------
+def check_implements_interface(provider: ProviderInterface) -> None:
+    if not isinstance(provider, ProviderInterface):
+        raise ConformanceError(
+            "does not satisfy ProviderInterface (needs get_capabilities and generate)"
+        )
+
+
+def check_capabilities_are_valid(provider: ProviderInterface) -> None:
+    caps = provider.get_capabilities()
+    if not isinstance(caps, ProviderCapabilities):
+        raise ConformanceError("get_capabilities did not return ProviderCapabilities")
+    if caps.context_window <= 0:
+        raise ConformanceError(f"context_window is {caps.context_window}")
+    if caps.serialization_reserve < 0:
+        raise ConformanceError(
+            f"serialization_reserve is {caps.serialization_reserve}"
+        )
+    if caps.serialization_reserve >= caps.context_window:
+        raise ConformanceError("serialization_reserve leaves no room for content")
+
+
+def check_capabilities_are_stable(provider: ProviderInterface) -> None:
+    """The budget is decided from one query and verified against another."""
+    if provider.get_capabilities() != provider.get_capabilities():
+        raise ConformanceError("get_capabilities is not stable across calls")
+
+
+def check_capability_flags_are_boolean(provider: ProviderInterface) -> None:
+    caps = provider.get_capabilities()
+    if not isinstance(caps.streaming_support, bool):
+        raise ConformanceError("streaming_support is not a bool")
+    if not isinstance(caps.tool_calling_support, bool):
+        raise ConformanceError("tool_calling_support is not a bool")
+
+
+def check_generate_returns_normalised_response(provider: ProviderInterface) -> None:
+    """A well-formed bundle yields a normalised response, or a normalised error.
+
+    Declining is legitimate — an adapter may reject for reasons the suite cannot
+    arrange. What is not legitimate is returning something that is not a
+    `ProviderResponse`, or an `error_type` outside the normalised set.
+    """
+    try:
+        response = provider.generate(sample_bundle(), sample_history())
+    except ProviderError:
+        return
+    if not isinstance(response, ProviderResponse):
+        raise ConformanceError("generate did not return ProviderResponse")
+    if response.error_type is not None and not isinstance(
+        response.error_type, ProviderErrorType
+    ):
+        raise ConformanceError("error_type is not a normalised ProviderErrorType")
+
+
+def check_bundle_is_not_mutated(provider: ProviderInterface) -> None:
+    """Content preservation, as far as this boundary can observe it.
+
+    The adapter serializes; the suite cannot read that payload without knowing
+    the provider's format. What it can require is that the caller's bundle comes
+    back unchanged — an adapter that edits content before sending has already
+    broken the counted-content guarantee.
+    """
+    bundle = sample_bundle()
+    before = (
+        bundle.static_sections,
+        bundle.conversation_history_window,
+        bundle.latest_message,
+    )
+    with contextlib.suppress(ProviderError):
+        provider.generate(bundle, sample_history())  # a failure is fine; mutation is not
+    after = (
+        bundle.static_sections,
+        bundle.conversation_history_window,
+        bundle.latest_message,
+    )
+    if before != after:
+        raise ConformanceError("generate mutated the PromptBundle it was given")
+
+
+def check_oversized_payload_fails_closed(provider: ProviderInterface) -> None:
+    """Overflow must raise, never truncate and never quietly succeed."""
+    caps = provider.get_capabilities()
+    bundle = oversized_bundle(caps)
+    try:
+        response = provider.generate(bundle, sample_history())
+    except ContextWindowExceededError:
+        return
+    except ProviderError as exc:
+        raise ConformanceError(
+            "an oversized payload raised "
+            f"{type(exc).__name__} rather than ContextWindowExceededError"
+        ) from exc
+    raise ConformanceError(
+        "an oversized payload returned a response instead of failing closed "
+        f"(error_type={response.error_type}) — truncation and silent fallback "
+        "are both forbidden"
+    )
+
+
+def check_errors_are_normalised(provider: ProviderInterface) -> None:
+    """Whatever escapes `generate` must be a normalised ProviderError.
+
+    Adapters that cannot be driven into a failure by the suite pass trivially;
+    the check exists to catch a raw SDK exception escaping (§9.9).
+    """
+    try:
+        provider.generate(oversized_bundle(provider.get_capabilities()), ())
+    except ProviderError:
+        return
+    except Exception as exc:  # noqa: BLE001 - that is precisely what is checked
+        raise ConformanceError(
+            f"a non-normalised {type(exc).__name__} escaped generate"
+        ) from exc
+
+
+CHECKS: tuple[Callable[[ProviderInterface], None], ...] = (
+    check_implements_interface,
+    check_capabilities_are_valid,
+    check_capabilities_are_stable,
+    check_capability_flags_are_boolean,
+    check_generate_returns_normalised_response,
+    check_bundle_is_not_mutated,
+    check_oversized_payload_fails_closed,
+    check_errors_are_normalised,
+)
+
+
+def run_conformance(provider: ProviderInterface) -> ConformanceReport:
+    """Run every check, collecting failures rather than stopping at the first."""
+    names: list[str] = []
+    failures: list[str] = []
+    for check in CHECKS:
+        names.append(check.__name__)
+        try:
+            check(provider)
+        except ConformanceError as exc:
+            failures.append(f"{check.__name__}: {exc}")
+        except Exception as exc:  # noqa: BLE001 - a harness must always report
+            # An adapter raising something unexpected is itself a conformance
+            # failure, and reporting it beats crashing the run: an author needs
+            # the whole picture, not the first thing that went wrong.
+            failures.append(
+                f"{check.__name__}: raised {type(exc).__name__}: {exc}"
+            )
+    return ConformanceReport(checks_run=tuple(names), failures=tuple(failures))
+
+
+def assert_conforms(provider: ProviderInterface) -> None:
+    """Convenience for an adapter's own test module: run, then raise on failure."""
+    run_conformance(provider).raise_if_failed()

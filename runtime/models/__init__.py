@@ -24,6 +24,12 @@ from runtime.models.prompt_bundle import (
     PromptSection,
     PromptSlot,
 )
+from runtime.models.provider import (
+    ProviderCapabilities,
+    ProviderErrorType,
+    ProviderMetadata,
+    ProviderResponse,
+)
 from runtime.models.resolved_context import (
     ExtensionPointName,
     ResolutionAction,
@@ -55,6 +61,10 @@ __all__ = [
     "PromptBundle",
     "PromptSection",
     "PromptSlot",
+    "ProviderCapabilities",
+    "ProviderErrorType",
+    "ProviderMetadata",
+    "ProviderResponse",
     "ResolutionAction",
     "ResolutionDecision",
     "ResolvedConfig",
