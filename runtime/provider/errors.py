@@ -70,7 +70,16 @@ class ContextWindowExceededError(ProviderError):
 
 
 class ProviderInvalidRequestError(ProviderError):
-    """The provider rejected the request as malformed or unsupported."""
+    """The provider rejected the request as malformed or unsupported.
+
+    **The provider rejected it.** This class is for a request the provider
+    refused to process — not for a request the provider accepted and answered
+    with something the adapter could not read. See E-1 below: a response the
+    adapter cannot parse is not evidence that the request was invalid, and
+    classifying it here would blame the caller for the provider's output and
+    make retry policy wrong (an invalid request should not be retried; a garbled
+    response reasonably may be).
+    """
 
     error_type = ProviderErrorType.INVALID_REQUEST
 
@@ -92,6 +101,40 @@ class ProviderCapabilityUnavailableError(ProviderError):
 
     error_type = ProviderErrorType.INVALID_REQUEST
 
+
+class ProviderBindingError(ProviderError):
+    """An adapter's tokenizer and capabilities describe different models (T-1).
+
+    A construction failure, like `ProviderCapabilityUnavailableError`, not a
+    transient one: it means the adapter was assembled from parts that do not
+    belong together. Raised by `ModelBinding` before any call is made, because
+    the damage a mismatched pair does is silent — Module 5 would count every
+    string precisely against the wrong vocabulary and report success.
+
+    `INVALID_REQUEST` rather than a new normalised type: the small error set is
+    the contract, and this is a misconfiguration the caller must fix.
+    """
+
+    error_type = ProviderErrorType.INVALID_REQUEST
+
+
+# --- E-1: what a malformed provider response normalises to --------------------
+#
+# A provider that accepts a request and answers with a body the adapter cannot
+# parse has produced an **unclassifiable** failure, and it maps to
+# `ProviderErrorType.UNKNOWN` — the base `ProviderError`.
+#
+# Not `INVALID_REQUEST`: the request was accepted, so nothing about it was
+# invalid, and saying otherwise misattributes the failure to the caller.
+# Not a new exception class either: growing this hierarchy per failure shape is
+# how normalisation erodes, and `UNKNOWN` exists precisely so that an honest
+# "this does not fit a category" needs no new type. The original vendor
+# exception is preserved as `__cause__`, so the detail survives for debugging
+# while the runtime above still sees only the normalised set.
+#
+# The one case that *is* `INVALID_REQUEST` is a failure genuinely attributable
+# to the request — the provider said the request was bad, rather than the
+# adapter finding the answer unreadable.
 
 #: Maps a normalised type back to its exception class, for adapters translating
 #: a vendor error they have already classified.

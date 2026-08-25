@@ -19,6 +19,13 @@ from runtime.models.provider import (
     ProviderMetadata,
     ProviderResponse,
 )
+from runtime.provider.binding import (
+    IdentifiedTokenizer,
+    ModelBinding,
+    ModelBoundProvider,
+    ModelIdentity,
+    TokenCounter,
+)
 from runtime.provider.conformance import (
     ConformanceError,
     ConformanceReport,
@@ -28,6 +35,7 @@ from runtime.provider.conformance import (
 from runtime.provider.errors import (
     ContextWindowExceededError,
     ProviderAuthenticationError,
+    ProviderBindingError,
     ProviderCapabilityUnavailableError,
     ProviderError,
     ProviderInvalidRequestError,
@@ -35,13 +43,24 @@ from runtime.provider.errors import (
     ProviderTimeoutError,
     ProviderUnavailableError,
 )
+from runtime.provider.inspection import (
+    PromptInspectable,
+    RecordingSerializer,
+    SerializedPrompt,
+)
 from runtime.provider.ports import ProviderInterface
 
 __all__ = [
     "ConformanceError",
     "ConformanceReport",
     "ContextWindowExceededError",
+    "IdentifiedTokenizer",
+    "ModelBinding",
+    "ModelBoundProvider",
+    "ModelIdentity",
+    "PromptInspectable",
     "ProviderAuthenticationError",
+    "ProviderBindingError",
     "ProviderCapabilities",
     "ProviderCapabilityUnavailableError",
     "ProviderError",
@@ -53,6 +72,9 @@ __all__ = [
     "ProviderResponse",
     "ProviderTimeoutError",
     "ProviderUnavailableError",
+    "RecordingSerializer",
+    "SerializedPrompt",
+    "TokenCounter",
     "assert_conforms",
     "run_conformance",
 ]

@@ -43,6 +43,22 @@ class ProviderCapabilities:
     Phase 1 keeps this a single scalar. It cannot vary with message count, so an
     adapter must declare it conservatively; per-message accounting is a recorded
     future refinement, deliberately not built.
+
+    **C-1a — the reserve also covers output (Phase-1 policy).** Providers bound
+    input and output against the same `context_window`, and nothing in the
+    framework reserves room for the model's completion: the Token Budget Manager
+    budgets input only. So an adapter's declared reserve must cover *both* its
+    serialization envelope and its completion allocation, and its own final
+    assertion is `serialized request + output allocation <= context_window`,
+    checked before the call and failing closed if it cannot be established.
+
+    This deliberately overloads one field rather than adding `max_output_tokens`
+    as a second capability. The overload is the known cost, accepted because it
+    requires no change to Module 5's arithmetic and no new term in a budget that
+    was only just proven exact. A dedicated output capability may replace it
+    later — but only through a deliberate architecture change, never as a quiet
+    refinement, because splitting the field changes what every existing adapter's
+    declared number means.
     """
 
     context_window: int

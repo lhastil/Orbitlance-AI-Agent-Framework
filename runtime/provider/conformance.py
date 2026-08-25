@@ -22,6 +22,17 @@ rather than by reaching into a payload the suite would have to understand.
 Each check is independent and raises `ConformanceError` naming what went
 wrong. `run_conformance` collects every failure rather than stopping at the
 first, so an adapter author sees the whole picture in one run.
+
+**CS-2 - what this offline suite deliberately does not claim.** Specification
+9.10 names capability truthfulness as the headline requirement: a provider
+claiming a context window that does not match reality is a conformance failure.
+Proving that requires a live call, so this suite does not attempt it. What it
+checks is self-consistency - capabilities are valid, stable across calls,
+positive window, non-negative reserve, boolean feature flags - and it must not
+be read as more than that. An offline fake cannot demonstrate a real provider's
+actual context window, and pretending otherwise would turn a recorded gap into a
+false assurance. A live-call conformance tier is a recorded future extension,
+deliberately not built in this phase.
 """
 
 from __future__ import annotations
@@ -37,7 +48,9 @@ from runtime.models.provider import (
     ProviderErrorType,
     ProviderResponse,
 )
+from runtime.provider.binding import ModelBinding, ModelBoundProvider
 from runtime.provider.errors import ContextWindowExceededError, ProviderError
+from runtime.provider.inspection import PromptInspectable
 from runtime.provider.ports import ProviderInterface
 
 
@@ -65,7 +78,15 @@ class ConformanceReport:
 
 
 # --- fixtures the suite drives adapters with ---------------------------------
-def sample_bundle(content: str = "system content") -> PromptBundle:
+#: CS-1 probes. Disjoint by construction: neither string can appear inside the
+#: other, so "which history reached the payload" has one unambiguous answer.
+BUNDLE_HISTORY_SENTINEL = "ORBITLANCE-CS1-AUTHORITATIVE-WINDOW"
+RAW_HISTORY_SENTINEL = "ORBITLANCE-CS1-RAW-ARGUMENT"
+
+
+def sample_bundle(
+    content: str = "system content", history: tuple[Turn, ...] | None = None
+) -> PromptBundle:
     """A minimal, well-formed bundle. Deliberately provider-neutral."""
     return PromptBundle(
         project_id="conformance",
@@ -77,9 +98,21 @@ def sample_bundle(content: str = "system content") -> PromptBundle:
                 content=content,
             ),
         ),
-        conversation_history_window=(Turn(TurnRole.USER, "earlier"),),
+        conversation_history_window=(
+            history if history is not None else (Turn(TurnRole.USER, "earlier"),)
+        ),
         latest_message="hello",
     )
+
+
+def history_probe_bundle() -> PromptBundle:
+    """A bundle whose history window carries the authoritative sentinel."""
+    return sample_bundle(history=(Turn(TurnRole.USER, BUNDLE_HISTORY_SENTINEL),))
+
+
+def raw_history_probe() -> tuple[Turn, ...]:
+    """The raw `history` argument - carries the sentinel that must NOT ship."""
+    return (Turn(TurnRole.USER, RAW_HISTORY_SENTINEL),)
 
 
 def sample_history() -> tuple[Turn, ...]:
@@ -212,6 +245,84 @@ def check_errors_are_normalised(provider: ProviderInterface) -> None:
         ) from exc
 
 
+def check_authoritative_history_is_serialized(provider: ProviderInterface) -> None:
+    """CS-1: the bundle's window ships; the raw `history` argument does not.
+
+    Proven neutrally. Two disjoint sentinels go in by the two paths, and the
+    adapter reports - in framework terms, never in its payload format - which
+    strings it serialized. No vendor structure is inspected.
+
+    An adapter that does not expose `PromptInspectable` fails here rather than
+    passing quietly: the rule cannot be proven against it, and "could not be
+    checked" has never counted as "passed" in this framework.
+    """
+    if not isinstance(provider, PromptInspectable):
+        raise ConformanceError(
+            "does not expose the provider-neutral inspection contract "
+            "(last_serialized_prompt), so P-1 authoritative-history use cannot "
+            "be proven; see runtime.provider.inspection"
+        )
+    try:
+        provider.generate(history_probe_bundle(), raw_history_probe())
+    except ProviderError as exc:
+        raise ConformanceError(
+            f"declined the well-formed CS-1 probe with {type(exc).__name__}, "
+            "leaving authoritative-history use unproven"
+        ) from exc
+    snapshot = provider.last_serialized_prompt()
+    if snapshot is None:
+        raise ConformanceError(
+            "reported no serialization after a successful generate, leaving "
+            "authoritative-history use unproven"
+        )
+    if snapshot.contains(RAW_HISTORY_SENTINEL):
+        raise ConformanceError(
+            "serialized the raw `history` argument, which the Token Budget "
+            "Manager never counted (P-1: only "
+            "prompt_bundle.conversation_history_window may reach the payload)"
+        )
+    if not snapshot.contains(BUNDLE_HISTORY_SENTINEL):
+        raise ConformanceError(
+            "did not serialize prompt_bundle.conversation_history_window, the "
+            "only authoritative history (P-1)"
+        )
+
+
+def check_tokenizer_and_capabilities_agree(provider: ProviderInterface) -> None:
+    """CS-3: capabilities and tokenizer describe the same model (T-1).
+
+    A tokenizer for one model paired with a window for another makes Module 5
+    count precisely against the wrong vocabulary and report success. This check
+    requires the adapter to expose the single binding both came from, and
+    requires that binding's tokenizer to say which model it is for.
+    """
+    if not isinstance(provider, ModelBoundProvider):
+        raise ConformanceError(
+            "does not expose model_binding(), so the tokenizer and capabilities "
+            "cannot be shown to describe the same model (T-1); see "
+            "runtime.provider.binding"
+        )
+    binding = provider.model_binding()
+    if not isinstance(binding, ModelBinding):
+        raise ConformanceError("model_binding did not return a ModelBinding")
+    if binding.capabilities != provider.get_capabilities():
+        raise ConformanceError(
+            "get_capabilities does not return the binding's capabilities, so "
+            "the binding is not the single origin it claims to be"
+        )
+    declared = binding.tokenizer_identity
+    if declared is None:
+        raise ConformanceError(
+            "the bound tokenizer declares no model identity, so its vocabulary "
+            "cannot be shown to match the declared context window (T-1)"
+        )
+    if declared != binding.identity:
+        raise ConformanceError(
+            f"tokenizer describes {declared} but the adapter is bound to "
+            f"{binding.identity}"
+        )
+
+
 CHECKS: tuple[Callable[[ProviderInterface], None], ...] = (
     check_implements_interface,
     check_capabilities_are_valid,
@@ -221,6 +332,8 @@ CHECKS: tuple[Callable[[ProviderInterface], None], ...] = (
     check_bundle_is_not_mutated,
     check_oversized_payload_fails_closed,
     check_errors_are_normalised,
+    check_authoritative_history_is_serialized,
+    check_tokenizer_and_capabilities_agree,
 )
 
 

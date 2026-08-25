@@ -23,8 +23,12 @@ from runtime.models.provider import (
 from runtime.provider import (
     ConformanceError,
     ContextWindowExceededError,
+    ModelBinding,
+    ModelIdentity,
     ProviderError,
     ProviderInterface,
+    RecordingSerializer,
+    SerializedPrompt,
     assert_conforms,
     run_conformance,
 )
@@ -42,14 +46,48 @@ RUNTIME = pathlib.Path(__file__).resolve().parents[2] / "runtime"
 PROVIDER = RUNTIME / "provider"
 
 
+class FakeTokenizer:
+    """A token counter bound to one fake identity. No tokenizer SDK involved."""
+
+    def __init__(self, identity: ModelIdentity) -> None:
+        self._identity = identity
+
+    def count_tokens(self, text: str) -> int:
+        return len(text)
+
+    def model_identity(self) -> ModelIdentity:
+        return self._identity
+
+
+#: Fake identities. Deliberately not any real vendor or model name.
+FAKE_A = ModelIdentity("fake-provider-a", "fake-model-1")
+FAKE_B = ModelIdentity("fake-provider-b", "fake-model-2")
+
+
 class ConformingProvider:
-    """A minimal adapter that meets the contract. Names no vendor."""
+    """A minimal adapter that meets the contract. Names no vendor.
+
+    Also demonstrates the two contracts a real adapter must satisfy: it builds a
+    single `ModelBinding` (T-1/P-2) and reports its serialization neutrally
+    (P-1/CS-1), reading history only from the bundle's authoritative window.
+    """
 
     def __init__(self, window: int = 1000, reserve: int = 50, **flags) -> None:
         self._caps = ProviderCapabilities(window, reserve, **flags)
+        self._binding = ModelBinding(
+            identity=FAKE_A, capabilities=self._caps, tokenizer=FakeTokenizer(FAKE_A)
+        )
+        self._last: SerializedPrompt | None = None
+        self._serializer = RecordingSerializer()
 
     def get_capabilities(self) -> ProviderCapabilities:
         return self._caps
+
+    def model_binding(self) -> ModelBinding:
+        return self._binding
+
+    def last_serialized_prompt(self) -> SerializedPrompt | None:
+        return self._last
 
     def generate(self, prompt_bundle, history) -> ProviderResponse:  # noqa: ARG002
         cost = sum(len(s.content) for s in prompt_bundle.static_sections)
@@ -57,6 +95,8 @@ class ConformingProvider:
             raise ContextWindowExceededError(
                 f"payload of {cost} exceeds the declared window"
             )
+        # P-1: history comes from the bundle's window. `history` is never read.
+        self._last = self._serializer.record(prompt_bundle)
         return ProviderResponse(
             text="ok", metadata=ProviderMetadata(model="fake", input_tokens=cost)
         )
@@ -173,7 +213,8 @@ def test_errors_preserve_the_vendor_cause_for_debugging() -> None:
 def test_a_conforming_provider_passes() -> None:
     report = run_conformance(ConformingProvider())
     assert report.passed, report.failures
-    assert len(report.checks_run) == 8
+    # 8 foundation checks + CS-1 (authoritative history) + CS-3 (binding).
+    assert len(report.checks_run) == 10
 
 
 def test_assert_conforms_is_silent_on_success() -> None:
