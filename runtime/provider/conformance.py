@@ -323,18 +323,53 @@ def check_tokenizer_and_capabilities_agree(provider: ProviderInterface) -> None:
         )
 
 
+#: Order matters only for cost and blast radius, never for meaning - each check
+#: is independent, as this module's docstring states. The two oversized-payload
+#: checks run LAST because they are the expensive ones: `oversized_bundle` scales
+#: with the declared window, so against a million-token model each sends several
+#: megabytes. Running the small structural probes first means a transient fault
+#: provoked by that traffic cannot be misreported as a contract violation, which
+#: is exactly what happened to CS-1 on the first live run.
+#:
+#: The oversized checks themselves are unchanged: same probes, same assertions,
+#: same fail-closed requirement. Only their position moved.
 CHECKS: tuple[Callable[[ProviderInterface], None], ...] = (
+    # -- cheap and structural: no payload larger than a few hundred bytes
     check_implements_interface,
     check_capabilities_are_valid,
     check_capabilities_are_stable,
     check_capability_flags_are_boolean,
+    check_tokenizer_and_capabilities_agree,
     check_generate_returns_normalised_response,
     check_bundle_is_not_mutated,
+    check_authoritative_history_is_serialized,
+    # -- expensive: payload sized from the provider's own context window
     check_oversized_payload_fails_closed,
     check_errors_are_normalised,
-    check_authoritative_history_is_serialized,
-    check_tokenizer_and_capabilities_agree,
 )
+
+
+def _with_cause(exc: BaseException) -> str:
+    """The failure text, plus whatever underlying error produced it.
+
+    A check that reports only its own sentence discards the diagnostic it was
+    handed. When a provider declines a probe, "declined with
+    ProviderUnavailableError" does not say whether the backend returned 503, 500
+    or the connection never opened - and those need different responses. The
+    cause is already chained; this simply stops it being thrown away.
+
+    Walks the whole chain, because an adapter may wrap a vendor error which
+    itself wraps a transport error, and the innermost link is usually the
+    informative one.
+    """
+    parts: list[str] = [str(exc)]
+    seen: set[int] = {id(exc)}
+    cause = exc.__cause__
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        parts.append(f"caused by {type(cause).__name__}: {cause}")
+        cause = cause.__cause__
+    return " | ".join(parts)
 
 
 def run_conformance(provider: ProviderInterface) -> ConformanceReport:
@@ -346,13 +381,13 @@ def run_conformance(provider: ProviderInterface) -> ConformanceReport:
         try:
             check(provider)
         except ConformanceError as exc:
-            failures.append(f"{check.__name__}: {exc}")
+            failures.append(f"{check.__name__}: {_with_cause(exc)}")
         except Exception as exc:  # noqa: BLE001 - a harness must always report
             # An adapter raising something unexpected is itself a conformance
             # failure, and reporting it beats crashing the run: an author needs
             # the whole picture, not the first thing that went wrong.
             failures.append(
-                f"{check.__name__}: raised {type(exc).__name__}: {exc}"
+                f"{check.__name__}: raised {type(exc).__name__}: {_with_cause(exc)}"
             )
     return ConformanceReport(checks_run=tuple(names), failures=tuple(failures))
 

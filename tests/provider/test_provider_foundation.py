@@ -2,9 +2,10 @@
 
 Verifies the boundary itself: the shared capability model, the neutral
 `ProviderInterface`, the normalised error set, and the conformance suite that
-every future adapter must pass. No provider is named, no SDK is imported, and no
-concrete adapter exists — the fakes here stand in for adapters that do not yet
-exist and prove the suite is usable before one is written.
+every future adapter must pass. No provider is named and no SDK is imported here
+— the fakes stand in for adapters generally, and prove the suite is usable
+independently of any one of them. The independence tests below hold every file
+in `runtime/` to that rule except the one authorized adapter subtree.
 """
 
 from __future__ import annotations
@@ -337,18 +338,57 @@ def test_an_incomplete_adapter_does_not_satisfy_the_protocol() -> None:
 
 
 # --- provider independence ---------------------------------------------------------
-def test_no_provider_sdk_anywhere_in_the_runtime() -> None:
-    for path in RUNTIME.rglob("*.py"):
-        if "__pycache__" in str(path):
-            continue
+#: The ONE authorized location for vendor names and provider SDK imports. Every
+#: other file in `runtime/` is still held to the original rule. This is a
+#: subtree exemption, not a blanket exemption of `runtime/provider/`.
+ADAPTER_SUBTREE = PROVIDER / "adapters" / "gemini"
+
+
+def _framework_sources() -> list[pathlib.Path]:
+    """Every runtime source outside the authorized adapter subtree."""
+    return [
+        path
+        for path in RUNTIME.rglob("*.py")
+        if "__pycache__" not in str(path) and ADAPTER_SUBTREE not in path.parents
+    ]
+
+
+def test_no_provider_sdk_outside_the_adapter_subtree() -> None:
+    for path in _framework_sources():
         src = path.read_text(encoding="utf-8").lower()
-        for sdk in ("import openai", "import anthropic", "import tiktoken", "from openai", "from anthropic"):
-            assert sdk not in src, f"{path.name} imports a provider SDK"
+        for sdk in (
+            "import openai",
+            "import anthropic",
+            "import tiktoken",
+            "from openai",
+            "from anthropic",
+            "import google",
+            "from google",
+            "google.genai",
+            "google.generativeai",
+        ):
+            assert sdk not in src, f"{path.relative_to(RUNTIME)} imports a provider SDK"
 
 
-def test_no_concrete_adapter_exists() -> None:
-    adapters = [p for p in (PROVIDER / "adapters").iterdir() if p.name != "__init__.py"]
-    assert adapters == [], f"unexpected adapter: {adapters}"
+def test_the_adapter_subtree_is_the_only_one_that_exists() -> None:
+    """Confirms the exemption is scoped to exactly what was authorized."""
+    entries = sorted(
+        p.name
+        for p in (PROVIDER / "adapters").iterdir()
+        if p.name not in ("__init__.py", "__pycache__")
+    )
+    assert entries == ["gemini"], f"unexpected adapter: {entries}"
+
+
+def test_the_adapters_package_imports_no_subpackage() -> None:
+    """Importing a subpackage would make an SDK a hard dependency of the layer."""
+    src = (PROVIDER / "adapters" / "__init__.py").read_text(encoding="utf-8")
+    statements = [
+        line
+        for line in src.splitlines()
+        if line.startswith(("import ", "from "))
+    ]
+    assert statements == [], f"adapters/__init__.py must stay import-free: {statements}"
 
 
 def test_provider_package_names_no_vendor() -> None:

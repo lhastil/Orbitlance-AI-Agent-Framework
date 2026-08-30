@@ -7,6 +7,10 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
+# Optional, per-adapter. Installing the framework does NOT install any provider
+# SDK: `dependencies` above stays empty, and only the Gemini adapter subtree
+# imports this. A second provider adds a second extra, never a base dependency.
+gemini = ["google-genai>=1.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

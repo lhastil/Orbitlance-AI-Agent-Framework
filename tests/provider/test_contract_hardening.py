@@ -534,6 +534,115 @@ def test_the_suite_reports_both_new_failures_together() -> None:
     assert "model_binding" in failures
 
 
+# =============================================================================
+# diagnostics and ordering (conformance-suite robustness)
+# =============================================================================
+def test_a_failure_records_the_underlying_cause() -> None:
+    """"declined with ProviderUnavailableError" does not say why.
+
+    The first live run reduced a transient provider fault to an exception name,
+    which is not enough to tell a 503 from a connection that never opened. The
+    cause is chained already; the report must not discard it.
+    """
+
+    class Declining(GoodAdapter):
+        def generate(self, prompt_bundle, history):  # noqa: ARG002
+            error = ProviderError("Gemini service failure: 503 model overloaded")
+            error.__cause__ = RuntimeError("APIError: upstream detail")
+            raise error
+
+    failures = " ".join(run_conformance(Declining()).failures)
+    assert "503 model overloaded" in failures
+    assert "caused by RuntimeError: APIError: upstream detail" in failures
+
+
+def test_the_whole_cause_chain_is_recorded() -> None:
+    """The innermost link is usually the informative one."""
+
+    class Nested(GoodAdapter):
+        def generate(self, prompt_bundle, history):  # noqa: ARG002
+            inner = OSError("connection reset by peer")
+            middle = RuntimeError("transport failed")
+            middle.__cause__ = inner
+            outer = ProviderError("provider declined")
+            outer.__cause__ = middle
+            raise outer
+
+    failures = " ".join(run_conformance(Nested()).failures)
+    assert "provider declined" in failures
+    assert "caused by RuntimeError: transport failed" in failures
+    assert "caused by OSError: connection reset by peer" in failures
+
+
+def test_a_failure_without_a_cause_reads_unchanged() -> None:
+    """Existing semantics preserved: no cause, no added noise."""
+
+    class Unbound:
+        def get_capabilities(self) -> ProviderCapabilities:
+            return ProviderCapabilities(1000, 10)
+
+        def generate(self, prompt_bundle, history):  # noqa: ARG002
+            return ProviderResponse(text="ok")
+
+    failures = run_conformance(Unbound()).failures
+    assert any("model_binding" in f for f in failures)
+    assert not any("caused by" in f for f in failures)
+
+
+def test_a_cause_cycle_does_not_hang_the_report() -> None:
+    error = ProviderError("outer")
+    error.__cause__ = error
+    from runtime.provider.conformance import _with_cause
+
+    assert _with_cause(error) == "outer"
+
+
+def test_the_cheap_checks_run_before_the_oversized_ones() -> None:
+    """`oversized_bundle` scales with the window: megabytes on a 1M model.
+
+    CS-1 failed live purely because it ran straight after that traffic. Order
+    carries no meaning here - the module documents every check as independent -
+    so the small probes go first and the expensive pair goes last.
+    """
+    from runtime.provider.conformance import CHECKS
+
+    order = [c.__name__ for c in CHECKS]
+    cs1 = order.index("check_authoritative_history_is_serialized")
+    cs3 = order.index("check_tokenizer_and_capabilities_agree")
+    oversized = order.index("check_oversized_payload_fails_closed")
+    normalised = order.index("check_errors_are_normalised")
+
+    assert cs1 < oversized, "CS-1 must not run in the wake of a multi-MB upload"
+    assert cs1 < normalised
+    assert cs3 < oversized
+    assert {oversized, normalised} == {len(order) - 2, len(order) - 1}
+
+
+def test_the_oversized_checks_were_not_weakened() -> None:
+    """Only their position changed. Same probe, same assertions."""
+    from runtime.provider.conformance import (
+        CHECKS,
+        check_errors_are_normalised,
+        check_oversized_payload_fails_closed,
+        oversized_bundle,
+    )
+
+    assert len(CHECKS) == 10
+    assert check_oversized_payload_fails_closed in CHECKS
+    assert check_errors_are_normalised in CHECKS
+
+    # still sized from the declared window, still genuinely oversized
+    small = oversized_bundle(ProviderCapabilities(100, 0))
+    large = oversized_bundle(ProviderCapabilities(100_000, 0))
+    assert len(large.static_sections[0].content) > len(small.static_sections[0].content)
+
+    class Truncating(GoodAdapter):
+        def generate(self, prompt_bundle, history):  # noqa: ARG002
+            return ProviderResponse(text="I shortened it")
+
+    assert "fails_closed" in " ".join(run_conformance(Truncating()).failures)
+
+
 def test_cs2_boundary_is_recorded_not_silently_assumed() -> None:
     """The suite must not imply it proved a real provider's window."""
     src = (PROVIDER / "conformance.py").read_text(encoding="utf-8")
