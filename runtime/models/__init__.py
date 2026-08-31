@@ -40,6 +40,7 @@ from runtime.models.resolved_context import (
 )
 from runtime.models.session import SessionState, SessionStatus
 from runtime.models.severity import Severity
+from runtime.models.tool import ToolErrorType, ToolRequest, ToolResponse
 from runtime.models.validation import (
     RuleExecution,
     RuleOutcome,
@@ -81,6 +82,9 @@ __all__ = [
     "SessionStatus",
     "Severity",
     "SkipReason",
+    "ToolErrorType",
+    "ToolRequest",
+    "ToolResponse",
     "Turn",
     "TurnRole",
     "ValidationCoverage",

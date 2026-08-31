@@ -12,11 +12,11 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**One open Architecture Issue: PR-1**, recorded 2026-08-31 during Module 10 —
-§10.10 and §13.10 disagree about whether the *secondary* provider must be
-registered. It does not block Module 10, which behaves correctly under either
-reading; closing it is a system-owner decision because the two clauses are both
-frozen. PA-3 was recorded as an Architecture Issue on 2026-08-09 and
+**Six open Architecture Issues: PR-1 and TE-2, TE-3, TE-5, TE-6, TE-7**, recorded
+2026-08-31 during Modules 10 and 11. None blocks the module it was found in;
+each needs a system-owner decision because closing it means ruling between
+frozen clauses, supplying a policy the framework does not define, or amending a
+frozen artifact. PA-3 was recorded as an Architecture Issue on 2026-08-09 and
 **reclassified to Documentation / Reporting on 2026-08-09** after a final
 evidence review found its behavioural premise unsupported. The system owner
 decided Interpretation B: `core/prompts/06_lead_qualification.md` is **not**
@@ -65,6 +65,13 @@ one class.
 | **PR-1** | **§10.10 and §13.10 disagree about whether the secondary provider must be registered** | **Architecture Issue** |
 | **PR-2** | **The declared Model is required at routing time but not at validation** | **Documentation / Reporting** |
 | **PR-3** | **`ProviderRequest` deferred; sole ownership reserved to the Provider Registry** | **Additive Extension** |
+| **TE-1** | **`ToolRequest` exists as a type with no writer** | **Documentation / Reporting** |
+| **TE-2** | **§11.12(c)'s retry scenario is unenforceable; no retry implemented** | **Architecture Issue** |
+| **TE-3** | **§11.2's integrations path unexecutable; §11.9's Resolver cross-reference diverges** | **Architecture Issue** |
+| **TE-4** | **`ToolResponse` has no diagnostic channel** | **Documentation / Reporting** |
+| **TE-5** | **No path from a tool result back to the model** | **Architecture Issue** |
+| **TE-6** | **`core/tools/` declares mutual dependency cycles** | **Architecture Issue** |
+| **TE-7** | **`ToolRequest.project_id` is never checked against the context's** | **Architecture Issue** |
 | **PA-4** | **§4 cites an assembly order in a section that does not exist** | **Documentation / Reporting** |
 | **PA-5** | **Playbook provenance check inspected only the first source** | **Closed** |
 | **PA-6** | **Runtime provenance cannot prove content origin** | **Documentation / Reporting** |
@@ -902,6 +909,220 @@ one residual worth capturing from the failover path, where a bundle budgeted
 for the primary is delivered to the secondary.
 
 Pinned by `test_d8_provider_request_is_not_implemented`.
+
+---
+
+## Found during Runtime Module 11 (Tool Executor), 2026-08-31
+
+All seven were identified in the Module 11 pre-implementation audit and recorded
+under explicit system-owner rulings. None is fixed in this milestone.
+
+### TE-1 — `ToolRequest` exists as a type with no writer
+
+**Class: Documentation / Reporting** · Ruling D-1(a).
+
+The frozen Data Models table names the **Workflow State Manager** `ToolRequest`'s
+sole writer. Nothing in the implemented runtime produces one:
+
+* `WorkflowRouter.route()` returns only a `WorkflowTransitionDecision`
+  (`target_workflow`, `collected_data`);
+* `WorkflowState` carries four fields, none tool-related;
+* the one provider adapter declares `tool_calling_support=False`, and §9.11
+  defers native tool-calling *"once Tool Executor integrates with providers
+  offering it"*.
+
+That last point is circular in the frozen specification itself: provider
+tool-calling waits for the Tool Executor, while the Tool Executor's input waits
+for a producer. **Neither side can move first without a decision.**
+
+The type is defined because §11.6's frozen signature cannot be written without
+it. Module 11 never constructs one — pinned by
+`test_the_executor_never_constructs_a_tool_request`.
+
+**Not fixed because:** giving Module 7 a tool vocabulary means deciding *when a
+workflow calls for an action*, which the workflow definitions express only as
+prose. That is a separate authorization.
+
+---
+
+### TE-2 — §11.12(c)'s retry scenario is unenforceable; no retry is implemented
+
+**Class: Architecture Issue** · Ruling D-5(a). Only the system owner can supply
+a policy, and closing it may require amending a frozen document.
+
+§11.2 and §11.9 defer to *"the error-handling behavior already documented in
+each tool contract"* and to *"policy"*. The complete text of that documented
+policy, across all five contracts:
+
+| Contract | Retry text, verbatim |
+|---|---|
+| `crm.md` | "Retry only when appropriate." |
+| `calendar.md` | "Retry only when appropriate." |
+| `email.md` | "Retry only when appropriate." |
+| `integrations.md` | "Retry when appropriate." |
+| `consultation_form.md` | "Retry according to business rules." |
+
+**No count, no backoff, no ceiling, no definition of "appropriate", and no
+artifact named "business rules" exists anywhere in the repository.**
+
+A retry policy invented to satisfy §11.12(c) would not be a convenience — it
+would re-send a customer's email and re-create a CRM record, violating the same
+contracts' *"Avoid sending duplicate emails"* and *"Never create duplicate
+records intentionally"*. **A side-effecting operation is never retried merely
+because its failure looked transient.**
+
+The executor therefore attempts exactly once and surfaces the first failure, and
+§11.12(c) is recorded as unimplementable rather than faked. Pinned by
+`test_the_tool_is_called_exactly_once_on_failure` and
+`test_no_retry_machinery_exists_in_the_source`.
+
+**To close it:** the system owner supplies a deterministic policy (which failure
+classes, how many attempts, what backoff, and how idempotency is established per
+contract), or the tool contracts are amended to carry one.
+
+---
+
+### TE-3 — §11.2's literal integrations path is not executable, and §11.9's Resolver cross-reference does not match the committed Resolver
+
+**Class: Architecture Issue** · Rulings D-3(b) and D-4(a). Continues [L-4](#l-4).
+
+Two related divergences, recorded together because they share one root.
+
+**(a) The §11.2 resolution path.** §11.2 says: *"resolve the project's configured
+concrete provider from `ResolvedContext.integrations`."* That mapping holds raw
+Markdown `ProjectDocument`s, and the real project's provider values are English
+sentences ("Practice management software's built-in patient CRM"). Interpreting
+them in Module 11 is ruled **Invalid** twice: ADR 0004 reserves parsing to the
+Project Loader, and L-4 rejects both re-implementing the Validation Layer's
+substring search and depending on that layer.
+
+So Module 11 resolves implementations by **explicit registration under a
+contract name**, and the literal §11.2 wording is **not implemented**. The
+integrations document informs a human operator wiring the process; it does not
+steer the runtime.
+
+**(b) The §11.9 cross-reference.** §11.9 requires the capability-unavailable
+outcome to be *"consistent with the Resolver's differentiated Integrations
+handling."* The committed Resolver is **not** differentiated when integrations
+are present — `resolve_integrations` returns `frozenset()` with the committed
+rationale that *"Deciding which individual tool has a configured provider is
+explicitly the Tool Executor's responsibility."* Module 11 then has no per-tool
+data and may not parse for it.
+
+Three documents assign the determination to three different parties, and no data
+path connects any of them. Module 11 therefore treats a contract as unavailable
+when **no implementation is registered for it**, and does not use
+`degraded_capabilities` as a per-tool mechanism.
+
+**To close it:** typed integration resolution in the Project Loader, per L-4's
+one **Correct** option — a separately authorized change to Modules 2 and 3.
+
+Pinned by `test_the_executor_does_not_parse_integration_markdown` and
+`test_b_availability_is_what_was_registered`.
+
+---
+
+### TE-4 — `ToolResponse` has no diagnostic channel
+
+**Class: Documentation / Reporting** · Consequence of the frozen four-field
+model.
+
+`ToolResponse` is frozen at `success, data, errorType, capability_unavailable`.
+A failure therefore carries its normalised class and **nothing else** — no
+message, no cause, no provider detail.
+
+Detail is deliberately not smuggled through `data` either: a concrete tool's
+exception text is the same credential-bearing channel the provider layer
+already goes to lengths to redact (a vendor exception "whose message and request
+URL may carry the credential"), and §11.3 forbids credentials crossing this
+boundary. Pinned by `test_d_a_raising_tool_leaks_no_exception_detail`.
+
+**Consequence for Observability:** when §15 is built it will be able to record
+*that* a tool failed and in which class, but not *why*. If richer diagnostics
+are wanted, they belong in an audit event emitted alongside the response — not
+in a fifth field on a frozen model.
+
+---
+
+### TE-5 — No path from a tool result back to the model
+
+**Class: Architecture Issue** · Ruling D-10(a). **For Module 14 to settle.**
+
+§14.2 orders the pipeline: *"…provider call → post-response guardrail check →
+workflow routing/state commit → **tool execution** → response delivery…"* — tool
+execution runs **after** the answer has been generated and guardrail-checked,
+and the pipeline contains **no second generation pass**.
+
+A tool result therefore cannot influence what the customer is told on that turn.
+Module 11 implements exactly what §11.6 declares: one request, one response, no
+loop, no batching, no parallelism, no second provider call.
+
+Whether that is intended — fire-and-forget side effects, which is precisely what
+`core/workflows/crm_sync.md` describes — or an omission that a tool-use loop
+would have to fill, **§14 does not settle**. It is recorded here so the Runtime
+Engine milestone decides it deliberately rather than discovering it.
+
+Pinned by `test_no_async_batching_or_parallel_surface_exists`.
+
+---
+
+### TE-6 — `core/tools/` declares mutual dependency cycles
+
+**Class: Architecture Issue** · Ruling: **record, do not fix.** `core/` is out of
+scope for this milestone.
+
+The five tool contracts' Dependencies sections point at each other:
+
+| File | Declares as dependencies |
+|---|---|
+| `integrations.md` | CRM Tool, Calendar Tool, Email Tool, Consultation Form Tool |
+| `crm.md` | Consultation Form Tool, Consultation Workflow, Follow-up Workflow, **Integration Tool** |
+| `calendar.md` | Consultation Workflow, CRM Tool, Email Tool, **Integration Tool** |
+| `email.md` | Consultation Form Tool, CRM Tool, **Integration Tool** |
+| `consultation_form.md` | Consultation Workflow, **CRM Tool**, **Email Tool**, Integration Tool |
+
+Cycles present: `integrations` ↔ each of the other four; `crm` ↔
+`consultation_form`; `email` ↔ `consultation_form`.
+
+**This is the same defect class as [KI-1 and KI-2](known-issues.md)**, both
+resolved — for `core/workflows/` and `core/guardrails/` respectively — by
+defining that dependencies are what a module *requires as input*, with the
+consuming side declaring the relationship one-directionally. **That definition
+was never applied to `core/tools/`**, and the cycles were recorded in no
+register until now.
+
+**Not blocking Module 11:** §11 never reads a tool contract's Dependencies
+section, and the executor does not resolve inter-tool ordering. This is a
+documentation-level defect in a frozen artifact.
+
+**No dependency-resolution mechanism has been invented.** What the Dependencies
+sections mean for tools needs the same architectural ruling KI-1 gave workflows.
+
+---
+
+### TE-7 — `ToolRequest.project_id` is never checked against `ResolvedContext.project_id`
+
+**Class: Architecture Issue** · Raised for ratification; deliberately **not**
+implemented.
+
+§11.4 takes both a `ToolRequest` (carrying `project_id`) and a `ResolvedContext`
+(carrying its own `project_id`). **Nothing in §11 requires them to agree, and
+Module 11 does not check.**
+
+A mismatch would execute one project's tool call against another project's
+resolved context — one clinic's appointment written with another clinic's
+configuration. The failure would be silent, which is the class this framework has
+removed repeatedly (`ModelBinding`'s T-1 identity check exists for exactly this
+shape of hazard on the provider side).
+
+**Why it is not implemented:** adding the check introduces a failure mode §11
+does not describe, and the authorization for this milestone was explicit that no
+additional behaviour be invented. It is recorded rather than added quietly.
+
+**To close it:** a ruling on whether `execute()` must refuse a mismatch, and if
+so whether that is a `capability_unavailable` decline, an `INVALID_REQUEST`
+failure, or a raised error — noting that §11.5 makes `ToolResponse` the module's
+only output.
 
 ---
 
