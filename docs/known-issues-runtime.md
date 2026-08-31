@@ -12,7 +12,11 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**No open Architecture Issue.** PA-3 was recorded as one on 2026-08-09 and
+**One open Architecture Issue: PR-1**, recorded 2026-08-31 during Module 10 —
+§10.10 and §13.10 disagree about whether the *secondary* provider must be
+registered. It does not block Module 10, which behaves correctly under either
+reading; closing it is a system-owner decision because the two clauses are both
+frozen. PA-3 was recorded as an Architecture Issue on 2026-08-09 and
 **reclassified to Documentation / Reporting on 2026-08-09** after a final
 evidence review found its behavioural premise unsupported. The system owner
 decided Interpretation B: `core/prompts/06_lead_qualification.md` is **not**
@@ -58,6 +62,9 @@ one class.
 | **R3-3** | **Missing Branding resolves to an empty overlay** | **Documentation / Reporting** |
 | **R3-4** | **`ResolvedContext` has no consumer yet** | **Additive Extension** |
 | **PA-3** | **`06_lead_qualification.md` is not assembled; its behaviour is delivered distributively** | **Documentation / Reporting** (was: Architecture Issue) |
+| **PR-1** | **§10.10 and §13.10 disagree about whether the secondary provider must be registered** | **Architecture Issue** |
+| **PR-2** | **The declared Model is required at routing time but not at validation** | **Documentation / Reporting** |
+| **PR-3** | **`ProviderRequest` deferred; sole ownership reserved to the Provider Registry** | **Additive Extension** |
 | **PA-4** | **§4 cites an assembly order in a section that does not exist** | **Documentation / Reporting** |
 | **PA-5** | **Playbook provenance check inspected only the first source** | **Closed** |
 | **PA-6** | **Runtime provenance cannot prove content origin** | **Documentation / Reporting** |
@@ -790,6 +797,111 @@ yet exist, and it was left open pending that module. The Loader is now
 feature-complete and does not consume `ValidationResult` at all — it performs no
 validation, by design. The migration therefore completed with zero affected
 consumers, and the concern the entry was holding open no longer exists.
+
+---
+
+## Found during Runtime Module 10 (Provider Registry), 2026-08-31
+
+### PR-1 — §10.10 and §13.10 disagree about which providers must be registered
+
+**Class: Architecture Issue** · Recorded under system-owner ruling D-9(d);
+Module 13 deliberately **not** modified.
+
+Two frozen clauses do not describe the same scope:
+
+| Source | Says |
+|---|---|
+| **§10.10** | "A project must never route to **an unregistered provider** — caught as a configuration error at Validation Layer time, not mid-conversation." |
+| **§13.10** | "Config's declared **LLM provider** is registered in the Provider Registry." *(singular)* |
+| **§10.1 / §10.9** | The **secondary is a routing destination**: "with secondary-provider fallback"; "Primary fails → attempt configured secondary". |
+| [KI-4](known-issues.md) | "a Validation Layer rule that **a project's declared provider** must be registered." *(singular)* |
+
+`ConfigProviderRegisteredRule` reads `llm_provider.primary` only, matching
+§13.10 and KI-4. So a project may declare an **unregistered secondary**, pass
+validation, activate, and then reach that secondary mid-conversation on the
+first transient primary failure — the precise outcome §10.10 forbids.
+
+**Why it is not fixed here.** Closing it means changing the Validation Layer,
+which was explicitly out of scope for the Module 10 milestone. The scope
+disagreement is also between two frozen documents, so which one yields is a
+system-owner decision, not an implementation choice.
+
+**Current behaviour, and why it is not dangerous today:** an unregistered
+secondary is simply not found, and `generate_with_fallback` raises
+`AllProvidersFailedError` — §10.9's "if none configured or it also fails"
+branch. Nothing routes to an unregistered adapter; the defect is that the
+condition surfaces mid-conversation instead of at validation time.
+
+**Options when this is taken up:**
+
+| Option | Consequence |
+|---|---|
+| Extend `ConfigProviderRegisteredRule` to check the secondary | Smallest change; modifies a committed rule and its tests |
+| Add a separate rule and code beside `CONF005` | Purely additive; two rules covering one clause |
+| Amend §13.10 to name both | Amends a frozen document |
+
+Pinned by `test_d9_the_secondary_is_not_validated_and_the_gap_is_recorded`.
+
+---
+
+### PR-2 — The declared Model is required at routing time but not at validation
+
+**Class: Documentation / Reporting** · Behaviour is correct and tested; what is
+open is that the Validation Layer does not enforce the same precondition.
+
+Ruling D-1(b) routes on `provider_id` and then asserts the resolved adapter's
+bound `model_id` equals the project's declared **Model**. An **absent or
+placeholder** Model fails that assertion — it is the same comparison, not a
+special case, and it is the fail-closed direction: the alternative is routing a
+project's traffic to a model nothing confirmed it chose.
+
+The consequence is a seam: `ConfigProviderDeclaredRule` requires only the
+**Primary** to be a real value (its recommendation text says "Set the Primary
+provider and Model", but the check reads `primary` alone). A project declaring a
+registered Primary and no Model therefore **passes validation and fails at
+`get_provider`** — a configuration error surfacing later than §10.10's activation
+gate intends.
+
+Both repository projects currently declare placeholder Primaries, so neither
+reaches this state today; both fail `config.llm_provider_declared` first.
+
+**Not fixed because:** the remedy is a Validation Layer change, the same
+out-of-scope module as PR-1, and the two are best decided together. The
+alternative — skipping the model check when no Model is declared — was rejected
+as fail-open: "could not be checked" has never counted as "passed" in this
+framework.
+
+Pinned by `test_d1_an_undeclared_model_is_refused`.
+
+---
+
+### PR-3 — `ProviderRequest` is deferred, its ownership reserved
+
+**Class: Additive Extension** · Recorded under system-owner ruling D-8(b).
+
+The frozen Data Models table defines `ProviderRequest` (`promptBundle`,
+`conversationHistoryWindow`, `providerCapabilitiesUsed`) and names the
+**Provider Registry its sole writer**. It is deliberately **not implemented**:
+
+* no clause requires it to be constructed — §10.6's two members neither accept
+  nor return it, and §9.6's `generate` does not take it;
+* nothing reads it — §15 names it nowhere, listing only "structured event
+  objects (type, `project_id`, `conversation_id`, payload)";
+* built now it would be a **PII-bearing object with no consumer and no
+  retention rule**, holding the full assembled prompt while §15.3 forbids
+  logging "raw credentials or PII beyond what Compliance's data-handling rules
+  allow".
+
+Deferring costs nothing: the frozen table reserves sole ownership to this
+module, so no other module can claim it in the meantime. Its natural moment is
+when Observability defines what may be recorded.
+
+Note for that work: `providerCapabilitiesUsed` is the field that would record
+*which provider's capabilities the bundle was actually budgeted against* — the
+one residual worth capturing from the failover path, where a bundle budgeted
+for the primary is delivered to the secondary.
+
+Pinned by `test_d8_provider_request_is_not_implemented`.
 
 ---
 
