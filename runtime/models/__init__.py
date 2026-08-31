@@ -12,6 +12,7 @@ from runtime.models.conversation import (
     WorkflowState,
 )
 from runtime.models.core_bundle import CoreBundle
+from runtime.models.guardrail import Checkpoint, GuardrailOrigin, GuardrailResult
 from runtime.models.project_config import LlmProviderSelection, ProjectConfig
 from runtime.models.project_context import (
     ExtensionPoint,
@@ -52,10 +53,13 @@ from runtime.models.workflow import WorkflowTransitionDecision
 
 __all__ = [
     "ASSEMBLY_ORDER",
+    "Checkpoint",
     "ConversationContext",
     "CoreBundle",
     "ExtensionPoint",
     "ExtensionPointName",
+    "GuardrailOrigin",
+    "GuardrailResult",
     "LlmProviderSelection",
     "ProjectConfig",
     "ProjectContext",
