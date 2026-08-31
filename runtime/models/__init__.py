@@ -37,6 +37,7 @@ from runtime.models.resolved_context import (
     ResolvedConfig,
     ResolvedContext,
 )
+from runtime.models.session import SessionState, SessionStatus
 from runtime.models.severity import Severity
 from runtime.models.validation import (
     RuleExecution,
@@ -71,6 +72,8 @@ __all__ = [
     "ResolvedContext",
     "RuleExecution",
     "RuleOutcome",
+    "SessionState",
+    "SessionStatus",
     "Severity",
     "SkipReason",
     "Turn",
