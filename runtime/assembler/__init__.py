@@ -15,6 +15,7 @@ from runtime.assembler.errors import (
     AssemblerError,
     PlaybookLeakError,
     UnknownWorkflowError,
+    WorkflowNotEnabledError,
 )
 from runtime.assembler.ports import TokenBudgetPort
 from runtime.assembler.prompt_assembler import PromptAssembler
@@ -45,4 +46,5 @@ __all__ = [
     "PromptSlot",
     "TokenBudgetPort",
     "UnknownWorkflowError",
+    "WorkflowNotEnabledError",
 ]

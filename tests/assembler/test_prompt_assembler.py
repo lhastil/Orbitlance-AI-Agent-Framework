@@ -18,6 +18,7 @@ from runtime.assembler import (
     PromptAssembler,
     PromptSlot,
     UnknownWorkflowError,
+    WorkflowNotEnabledError,
 )
 from runtime.assembler import core_slots as slots
 from runtime.loader import markdown
@@ -330,6 +331,108 @@ def test_workflow_index_lists_only_enabled_workflows() -> None:
 def test_unknown_active_workflow_raises_rather_than_omitting() -> None:
     with pytest.raises(UnknownWorkflowError):
         assemble(st=state("not_a_workflow"))
+
+
+# --- project scope: a Core workflow is not automatically an enabled one -------
+def test_an_enabled_active_workflow_renders_normally() -> None:
+    """The ordinary path stays exactly as it was."""
+    bundle = assemble(
+        ctx=resolved(enabled=("discovery", "recommendation")), st=state("discovery")
+    )
+    workflow = bundle.section(PromptSlot.WORKFLOW)
+    assert workflow is not None
+    assert workflow.sources == ("core/workflows/discovery.md",)
+
+
+def test_an_active_workflow_the_project_did_not_enable_is_refused() -> None:
+    """Present in CoreBundle, absent from the project's scope.
+
+    Before this check the assembler rendered the workflow anyway, because it
+    verified Core existence only. A project that switched a workflow off would
+    still have had its instructions put in front of the model.
+    """
+    with pytest.raises(WorkflowNotEnabledError):
+        assemble(ctx=resolved(enabled=("consultation",)), st=state("discovery"))
+
+
+def test_the_refusal_names_the_workflow_and_the_project_scope() -> None:
+    with pytest.raises(WorkflowNotEnabledError) as caught:
+        assemble(
+            ctx=resolved(enabled=("consultation", "follow_up")), st=state("discovery")
+        )
+    message = str(caught.value)
+    assert "'discovery'" in message
+    assert "example_client" in message
+    assert "consultation" in message and "follow_up" in message
+
+
+def test_an_empty_enabled_set_refuses_every_workflow() -> None:
+    with pytest.raises(WorkflowNotEnabledError, match=r"\(none\)"):
+        assemble(ctx=resolved(enabled=()), st=state("discovery"))
+
+
+def test_core_existence_and_project_scope_are_separate_checks() -> None:
+    """A workflow can fail either check, and they report different bugs.
+
+    An undefined workflow is a Router defect (rule 10); an unenabled one is a
+    routing decision outside the project's configured scope. The Core check runs
+    first, so a workflow that is both keeps the more fundamental diagnosis.
+    """
+    with pytest.raises(UnknownWorkflowError):
+        assemble(ctx=resolved(enabled=("discovery",)), st=state("not_a_workflow"))
+    with pytest.raises(WorkflowNotEnabledError):
+        assemble(ctx=resolved(enabled=("discovery",)), st=state("consultation"))
+
+
+def test_the_two_errors_share_the_assembler_base_but_are_distinct() -> None:
+    from runtime.assembler import AssemblerError
+
+    assert issubclass(WorkflowNotEnabledError, AssemblerError)
+    assert not issubclass(WorkflowNotEnabledError, UnknownWorkflowError)
+    assert not issubclass(UnknownWorkflowError, WorkflowNotEnabledError)
+
+
+def test_the_refusal_does_not_mutate_workflow_state_or_context() -> None:
+    """The assembler stays a pure transformation even on the failure path."""
+    context = resolved(enabled=("consultation",))
+    workflow_state = state("discovery")
+    before = (
+        context.project_id,
+        context.config.enabled_workflows,
+        workflow_state.active_workflow,
+        workflow_state.transition_history,
+        workflow_state.collected_data,
+    )
+    with pytest.raises(WorkflowNotEnabledError):
+        assemble(ctx=context, st=workflow_state)
+    assert (
+        context.project_id,
+        context.config.enabled_workflows,
+        workflow_state.active_workflow,
+        workflow_state.transition_history,
+        workflow_state.collected_data,
+    ) == before
+
+
+def test_the_assembler_never_substitutes_an_enabled_workflow() -> None:
+    """Refusing is not choosing. It must not quietly render a different one."""
+    with pytest.raises(WorkflowNotEnabledError):
+        assemble(ctx=resolved(enabled=("consultation",)), st=state("discovery"))
+
+
+def test_no_active_workflow_is_unaffected_by_the_scope_check() -> None:
+    """`None` still omits the slot; scope is only checked once one is active."""
+    bundle = assemble(ctx=resolved(enabled=()), st=state(None))
+    assert bundle.section(PromptSlot.WORKFLOW) is None
+
+
+def test_a_degraded_bundle_is_unaffected_by_the_scope_check() -> None:
+    """Rule 9's degraded path renders no workflow slot at all, so it cannot trip."""
+    bundle = assemble(
+        ctx=resolved(incomplete=True, enabled=("consultation",)), st=state("discovery")
+    )
+    assert bundle.degraded is True
+    assert bundle.section(PromptSlot.WORKFLOW) is None
 
 
 def test_no_active_workflow_omits_the_slot() -> None:

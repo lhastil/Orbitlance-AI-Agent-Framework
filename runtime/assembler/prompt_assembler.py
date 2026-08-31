@@ -30,7 +30,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from runtime.assembler import core_slots as slots
-from runtime.assembler.errors import PlaybookLeakError, UnknownWorkflowError
+from runtime.assembler.errors import (
+    PlaybookLeakError,
+    UnknownWorkflowError,
+    WorkflowNotEnabledError,
+)
 from runtime.assembler.ports import TokenBudgetPort
 from runtime.models.budget import (
     BudgetRequest,
@@ -341,6 +345,19 @@ class PromptAssembler:
             raise UnknownWorkflowError(
                 f"Active workflow {active!r} does not exist in core/workflows/. "
                 "The Workflow Router must never route to an undefined workflow."
+            )
+
+        # Existing in Core is not the same as being enabled for this project.
+        # The two checks stay separate because they catch different bugs: an
+        # undefined workflow is a Router defect, an unenabled one is a routing
+        # decision made outside the project's configured scope.
+        if active not in enabled:
+            raise WorkflowNotEnabledError(
+                f"Active workflow {active!r} is not enabled for project "
+                f"{context.project_id!r}. Enabled workflows: "
+                f"{', '.join(enabled) if enabled else '(none)'}. The assembler "
+                "renders only workflows the project selected; it does not "
+                "choose a different one."
             )
 
         others = tuple(name for name in enabled if name != active)

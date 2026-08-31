@@ -626,12 +626,26 @@ def test_seam_d4_avoids_rendering_a_workflow_the_project_disabled(
 ) -> None:
     """Why D-4 matters, demonstrated against the real Assembler.
 
-    The Assembler checks only that an active workflow exists in `CoreBundle` —
-    not that the project enabled it. Had this module defaulted to Discovery, a
-    project that enabled only `consultation` would have had Discovery rendered
-    into its prompt. Starting at None means nothing is rendered until the Router
-    chooses, and the Router does see the project's configuration.
+    How project scope is actually enforced, across four modules:
+
+    * the **Workflow Router** (§6) selects a candidate workflow. Its frozen
+      `route(currentState, latestMessage, coreBundle)` signature does **not**
+      receive `ResolvedContext`, so the Router cannot see `enabled_workflows`
+      and cannot enforce project scope itself;
+    * the **Workflow State Manager** (§7) persists whatever decision it is
+      handed, and deliberately judges nothing;
+    * the **Prompt Assembler** (§4) enforces scope as defence in depth — it is
+      the only built module holding both the project's `enabled_workflows` and
+      the active `WorkflowState` in one call;
+    * the **Runtime Engine** (§14) will provide the primary orchestration-level
+      gate once it exists.
+
+    So D-4 matters for a different reason than "the Router will catch it":
+    starting at None means nothing is rendered until something deliberately
+    routes, and if that routing ever lands outside the project's scope the
+    Assembler refuses rather than rendering it.
     """
+    from runtime.assembler import WorkflowNotEnabledError
     from runtime.models.prompt_bundle import PromptSlot
 
     core, resolved = real_context
@@ -647,11 +661,19 @@ def test_seam_d4_avoids_rendering_a_workflow_the_project_disabled(
         PromptSlot.WORKFLOW
     ) is None
 
-    # and the hazard the default would have created is real
+    # A workflow present in CoreBundle but outside the project's enabled scope
+    # is refused, not rendered and not silently dropped.
     forced = WorkflowState(conversation_id="c", active_workflow="discovery")
-    assert assembler.assemble(restricted, forced, _conversation()).section(
-        PromptSlot.WORKFLOW
-    ) is not None
+    assert "discovery.md" in core.workflows, "the workflow exists in Core"
+    assert "discovery" not in restricted.config.enabled_workflows
+
+    with pytest.raises(WorkflowNotEnabledError) as caught:
+        assembler.assemble(restricted, forced, _conversation())
+
+    message = str(caught.value)
+    assert "'discovery'" in message
+    assert restricted.project_id in message
+    assert "consultation" in message
 
 
 def test_seam_session_and_workflow_state_key_on_the_same_conversation_id() -> None:
