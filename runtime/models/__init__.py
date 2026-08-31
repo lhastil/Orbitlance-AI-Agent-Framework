@@ -48,6 +48,7 @@ from runtime.models.validation import (
     ValidationResult,
     ValidationTarget,
 )
+from runtime.models.workflow import WorkflowTransitionDecision
 
 __all__ = [
     "ASSEMBLY_ORDER",
@@ -83,4 +84,5 @@ __all__ = [
     "ValidationResult",
     "ValidationTarget",
     "WorkflowState",
+    "WorkflowTransitionDecision",
 ]
