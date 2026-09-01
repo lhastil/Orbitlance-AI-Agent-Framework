@@ -32,6 +32,9 @@ from runtime.tool_executor import DuplicateToolError, ToolExecutor, ToolPort
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 PACKAGE = REPO_ROOT / "runtime" / "tool_executor"
 MODEL_FILE = REPO_ROOT / "runtime" / "models" / "tool.py"
+#: The one sanctioned importer. §14.7 designates the Runtime Engine the single
+#: top of the graph and gives it "every other module" as a dependency.
+RUNTIME_ENGINE = REPO_ROOT / "runtime" / "runtime_engine"
 
 #: The five contracts §11.11 fixes as current. Transcribed from `core/tools/`
 #: for use as test data only — this is a fixture, not a runtime constant.
@@ -634,9 +637,16 @@ def test_the_port_is_a_runtime_checkable_protocol() -> None:
 
 
 def test_nothing_in_the_runtime_imports_this_module() -> None:
-    """Module 11 is a leaf below the Runtime Engine; nothing depends back."""
+    """Module 11 is a leaf below the Runtime Engine; no *peer* depends back.
+
+    §14.7 makes the Runtime Engine the one exception, deliberately: it is the
+    designated root of the graph and depends on every other module, so that no
+    other module has to depend on more than one or two peers. Excluding it here
+    keeps the invariant this test exists for — a peer importing a leaf — while
+    permitting the single edge the frozen specification requires.
+    """
     for path in (REPO_ROOT / "runtime").rglob("*.py"):
-        if path.is_relative_to(PACKAGE):
+        if path.is_relative_to(PACKAGE) or path.is_relative_to(RUNTIME_ENGINE):
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):

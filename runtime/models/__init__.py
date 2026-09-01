@@ -38,6 +38,7 @@ from runtime.models.resolved_context import (
     ResolvedConfig,
     ResolvedContext,
 )
+from runtime.models.runtime import RuntimeRequest, RuntimeResponse
 from runtime.models.session import SessionState, SessionStatus
 from runtime.models.severity import Severity
 from runtime.models.tool import ToolErrorType, ToolRequest, ToolResponse
@@ -78,6 +79,8 @@ __all__ = [
     "ResolvedContext",
     "RuleExecution",
     "RuleOutcome",
+    "RuntimeRequest",
+    "RuntimeResponse",
     "SessionState",
     "SessionStatus",
     "Severity",

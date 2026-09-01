@@ -12,11 +12,12 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Six open Architecture Issues: PR-1 and TE-2, TE-3, TE-5, TE-6, TE-7**, recorded
-2026-08-31 during Modules 10 and 11. None blocks the module it was found in;
-each needs a system-owner decision because closing it means ruling between
-frozen clauses, supplying a policy the framework does not define, or amending a
-frozen artifact. PA-3 was recorded as an Architecture Issue on 2026-08-09 and
+**Ten open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, and RE-1,
+RE-3, RE-4, RE-5**, recorded during Modules 10, 11 and 14. None blocks the module
+it was found in; each needs a system-owner decision because closing it means
+ruling between frozen clauses, supplying a policy the framework does not define,
+or amending a frozen artifact. PA-3 was recorded as an Architecture Issue on
+2026-08-09 and
 **reclassified to Documentation / Reporting on 2026-08-09** after a final
 evidence review found its behavioural premise unsupported. The system owner
 decided Interpretation B: `core/prompts/06_lead_qualification.md` is **not**
@@ -72,6 +73,13 @@ one class.
 | **TE-5** | **No path from a tool result back to the model** | **Architecture Issue** |
 | **TE-6** | **`core/tools/` declares mutual dependency cycles** | **Architecture Issue** |
 | **TE-7** | **`ToolRequest.project_id` is never checked against the context's** | **Architecture Issue** |
+| **RE-1** | **Module 4 still accepts an unbudgeted assembly; §14 never uses it** | **Architecture Issue** |
+| **RE-2** | **`RuntimeRequest` / `RuntimeResponse` are framework-introduced** | **Documentation / Reporting** |
+| **RE-3** | **§14 establishes no concurrent runtime contract** | **Architecture Issue** |
+| **RE-4** | **The default runtime keeps no audit trail** | **Architecture Issue** |
+| **RE-5** | **§14 composes no customer-facing fallback text** | **Architecture Issue** |
+| **RE-6** | **A blocked answer is not recorded as an agent turn** | **Documentation / Reporting** |
+| **RE-7** | **§14 publishes no camelCase alias; the convention is unsettled** | **Documentation / Reporting** |
 | **PA-4** | **§4 cites an assembly order in a section that does not exist** | **Documentation / Reporting** |
 | **PA-5** | **Playbook provenance check inspected only the first source** | **Closed** |
 | **PA-6** | **Runtime provenance cannot prove content origin** | **Documentation / Reporting** |
@@ -1123,6 +1131,186 @@ additional behaviour be invented. It is recorded rather than added quietly.
 so whether that is a `capability_unavailable` decline, an `INVALID_REQUEST`
 failure, or a raised error — noting that §11.5 makes `ToolResponse` the module's
 only output.
+
+---
+
+## Found during Runtime Module 14 (Runtime Engine), 2026-09-01
+
+Seven entries, all recorded under explicit system-owner rulings. None is fixed
+in this milestone.
+
+**Two questions the milestone settled rather than left open**, noted here so
+neither is rediscovered as a defect:
+
+* **Pipeline order.** The implementation authorization sketched the tool stage
+  *before* workflow routing. §14.2 orders them the other way — *"post-response
+  guardrail check → workflow routing/state commit → tool execution → response
+  delivery"* — and the frozen clause was followed. Pinned by
+  `test_the_pipeline_order_matches_the_frozen_sequence`.
+* **Activation.** No public `activate()` was added. §14.6 declares one member,
+  and activation is enforced at construction: `RuntimeEngine.__init__` refuses a
+  `ValidationResult` that is not for this project, is not a project result, or is
+  not valid. The activation state is the existing `ValidationResult` +
+  `ResolvedContext` pair — no new model was introduced.
+
+---
+
+### RE-1 — Module 4 still accepts an unbudgeted assembly, and §14 must never use it
+
+**Class: Architecture Issue** · Ruling D-1(b).
+
+`PromptAssembler.__init__` defaults `token_budget=None`, and `_select` then
+returns *all* Knowledge candidates and the *entire* history window without
+counting anything, under an inline `# Phase 1: all of them.`
+
+That is a budget decision no measurement produced. It is the same defect shape
+as **V-1**, where `NullProviderRegistry` was **deleted** because a default that
+answered without authority made `Validator()` fail open. Here the default
+survives, for a different reason: making the port required means editing Module
+4 and roughly half of its 1,179-line committed test suite, which the
+authorization placed out of scope.
+
+**What §14 does instead:** `RuntimeEngine.__init__` takes `token_budget` as a
+required keyword argument with no default, `PromptAssemblyStage` is the only
+place an assembler is constructed, and a structural test asserts every
+`PromptAssembler(...)` call in `runtime/runtime_engine/` passes `token_budget=`.
+No engine path can reach the unmeasured branch.
+
+**What remains open:** any *other* caller still can. The defect is scoped, not
+removed.
+
+**To close it:** make `TokenBudgetPort` a required argument of
+`PromptAssembler`, and update Module 4's tests — a separately authorized change.
+
+---
+
+### RE-2 — `RuntimeRequest` is framework-introduced
+
+**Class: Documentation / Reporting** · Approved by ruling.
+
+§14.6 is `handleRequest(request) -> RuntimeResponse` and §14.4 defines the input
+as *"Incoming request (`project_id`, `conversation_id`, message, channel)"* — but
+the frozen Data Models table names **neither** `RuntimeRequest` nor
+`RuntimeResponse`. The four request fields are authoritative; the type name is
+introduced by this milestone, as is `RuntimeResponse`'s four-field shape, which
+was ruled minimal.
+
+Recorded so a later reader does not mistake either type for a frozen model. Both
+live in `runtime/models/` with the same conventions as every other model.
+
+---
+
+### RE-3 — §14 establishes no concurrent runtime contract
+
+**Class: Architecture Issue** · Ruling: §14 must not introduce concurrency.
+
+One request is executed start to finish on the calling thread. There is no
+async surface, no thread, no executor, no pool and no lock in
+`runtime/runtime_engine/` — pinned by `test_18_no_concurrency_machinery_exists`.
+
+**This does not make the repository thread-safe, and must not be read that way.**
+Measured at this milestone:
+
+| Component | State held | Guarded? |
+|---|---|---|
+| `WorkflowStateManager` | per-conversation workflow state | ✅ per-conversation locks (§7.10) |
+| `SessionManager` | conversations and sessions | ❌ none |
+| `ProviderRegistry` | registered adapters | ❌ none |
+| `ToolExecutor` | registered tools | ❌ none |
+| `CoreLoader` | process-lifetime cache | ❌ none |
+| Validation rules | shared singletons | ❌ none (**V-7**) |
+| Provider adapter | `_last` serialized prompt | ❌ none (**S-1**) |
+
+**§7.10 is the only atomicity clause in the entire specification.** Running this
+engine concurrently is unsupported. **V-7** and its ADR 0003 deadline
+(*"before Runtime Engine adds concurrency"*) remain open, as does the §12
+concurrency asymmetry.
+
+---
+
+### RE-4 — The default runtime keeps no audit trail
+
+**Class: Architecture Issue** · Ruling D-4(a).
+
+§14.2 ends its pipeline with observability logging and §15 is not implemented.
+§14 defines a minimal `ObservabilitySink` Protocol — `record(event_type,
+project_id, conversation_id, payload)`, taken from §15.4's stated inputs — and
+defaults to `NullObservabilitySink`, which does nothing.
+
+The engine emits exactly one event per turn, including for blocked and degraded
+turns, and guards the call so a sink failure never blocks the conversation
+(§15.9). The payload carries only outcome facts — never the message, the prompt
+or the answer — because §15.3 forbids logging PII beyond an allowance nobody has
+written.
+
+**The gap is the default.** §15.9 also says a silent audit-logging gap *"is
+itself a Compliance risk"*, and running on `NullObservabilitySink` is exactly
+that. The seam is real; the recorder is not built.
+
+**To close it:** implement §15. The Protocol here is §14-local and expected to be
+replaced, not extended.
+
+---
+
+### RE-5 — §14 composes no customer-facing fallback text
+
+**Class: Architecture Issue.**
+
+When a turn is blocked, escalated or degraded, `RuntimeResponse.text` is empty
+and the flags carry the outcome. `RuntimeResponse.__post_init__` refuses a
+blocked response that carries text at all.
+
+§8.3 assigns composing a safe alternative outside the Guardrail Engine, and
+§14.12(c) speaks of *"a clean degraded response"*. But the phrase "technical
+difficulties" appears exactly once in this repository — in §10.9 — and
+`core/prompts/09_fallback_responses.md` contains no technical-failure entry and
+no selection mechanism. Its content is prose written for a model to follow, not
+strings a runtime can pick from.
+
+So §14 emits flags and no wording. **Composing what the customer reads currently
+belongs to the channel adapter**, which §14.5 places outside this specification's
+scope — and nothing states that explicitly.
+
+**To close it:** either a mechanism that selects a Core fallback response, or an
+explicit ruling that the channel adapter owns the wording.
+
+---
+
+### RE-6 — A blocked answer is not recorded as an agent turn
+
+**Class: Documentation / Reporting.**
+
+The Session Manager's contract prescribes appending the agent's turn *"again
+afterwards with the response"*. §14 does so only in the delivery stage, which a
+guardrail block short-circuits before reaching.
+
+The reasoning: a response the customer never saw must not become an agent turn
+that the next turn's prompt shows the model as delivered. The alternative would
+feed a blocked answer back into the conversation as though it had been sent.
+
+§14 states no rule either way, and neither does §12. The consequence is that the
+durable record contains the user's turn but no agent turn for a blocked turn —
+which an auditor should know, since it means the conversation record alone does
+not show that a block occurred. That information lives only in the observability
+event, which the default sink discards (RE-4).
+
+---
+
+### RE-7 — §14 publishes no `handleRequest` alias, and the convention is unsettled
+
+**Class: Documentation / Reporting.**
+
+The frozen specification writes every public member in camelCase —
+`handleRequest`, `getProvider`, `validateCore`, `execute`. Twelve modules render
+them snake_case. **The Validation Layer is the only module that also publishes
+camelCase aliases** (`validateCore`, `validateProject`, both `# noqa: N815`).
+
+§14 does **not** add one: no ruling sanctioned the convention repository-wide,
+and adding an alias here would make §14 the second module of fourteen to differ.
+`RuntimeEngine.handle_request` is the only public member.
+
+**To close it:** rule the convention once — either every module publishes the
+frozen camelCase name, or the Validation Layer's aliases are the anomaly.
 
 ---
 
