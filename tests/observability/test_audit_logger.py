@@ -329,8 +329,22 @@ def test_a_broken_store_raises_from_the_logger() -> None:
 
     §15.9 requires the *conversation* to be unaffected, which §14's guard
     provides. Swallowing the failure here would leave nobody able to see it.
+
+    **Unchanged by OB-3.** The alert was added at §14's guard precisely so this
+    contract could stay as it is: a store failure still raises, and the logger
+    still gains no alerting responsibility.
     """
     with pytest.raises(RuntimeError, match="unreachable"):
+        AuditLogger(BrokenStore()).log_event(event())
+
+
+def test_the_loggers_failure_contract_is_unchanged_by_ob3() -> None:
+    """A successful write returns the stored event; a failed one raises."""
+    logger = AuditLogger()
+    recorded = logger.log_event(event())
+    assert recorded.is_recorded
+
+    with pytest.raises(RuntimeError):
         AuditLogger(BrokenStore()).log_event(event())
 
 
@@ -353,10 +367,18 @@ def test_a_broken_store_does_not_affect_a_conversation(core: CoreBundle) -> None
 
 
 def test_the_logger_raises_no_alert_of_its_own() -> None:
-    """§15.9 also asks for an alert/metric. There is no seam for one (OB-3).
+    """§15.9's alert is raised by §14, not here — and that is the ruling (OB-3).
 
-    Structural, so the gap stays visible: nothing here logs, prints, or reaches
-    a monitoring system, and §15.9 is therefore only partially met.
+    The alert exists now: `RuntimeEngine._observe` emits it, proven by the OB-3
+    tests in `tests/runtime_engine/`. It lives there rather than here for a
+    structural reason — `log_event` *raises* on store failure by contract, and
+    §14's guard is the frame that holds the exception. §15.3 also keeps this
+    module a pure recorder, and alerting is a decision about what a failure
+    means.
+
+    So this assertion is not a record of an absence any more; it pins the
+    **division of responsibility**. The Audit Logger must stay silent: nothing
+    here logs, prints, or reaches a monitoring system.
     """
     for path, tree in trees():
         for node in ast.walk(tree):

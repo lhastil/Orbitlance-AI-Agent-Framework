@@ -22,6 +22,7 @@ the system owner's rulings, which §14 does not state.
 from __future__ import annotations
 
 import ast
+import logging
 import pathlib
 
 import pytest
@@ -1420,6 +1421,181 @@ def test_the_engine_package_depends_only_downward() -> None:
             ):
                 package = ".".join(node.module.split(".")[:2])
                 assert package in allowed, f"{path.name} imports {node.module}"
+
+
+# =============================================================================
+# OB-3 — §15.9's audit-gap alert
+# =============================================================================
+AUDIT_LOGGER_NAME = "runtime.runtime_engine.engine"
+
+
+def audit_gap_records(caplog: pytest.LogCaptureFixture) -> list:
+    """Only the engine's audit-gap alerts, ignoring anything else logged."""
+    return [r for r in caplog.records if r.name == AUDIT_LOGGER_NAME]
+
+
+def test_ob3_a_failing_audit_store_raises_exactly_one_alert(
+    core: CoreBundle, fixture_context: ResolvedContext, caplog: pytest.LogCaptureFixture
+) -> None:
+    """§15.9's second half: 'it must raise its own alert/metric'.
+
+    Before OB-3 this path was a bare `return` — the audit write failed and the
+    runtime said nothing, which the clause names a Compliance risk.
+    """
+    engine, _, _ = build_engine(core, fixture_context, observability=ExplodingSink())
+    with caplog.at_level(logging.ERROR, logger=AUDIT_LOGGER_NAME):
+        engine.handle_request(request())
+
+    records = audit_gap_records(caplog)
+    assert len(records) == 1
+    assert records[0].levelno == logging.ERROR
+
+
+def test_ob3_a_healthy_turn_raises_no_alert(
+    core: CoreBundle, fixture_context: ResolvedContext, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An alert on every turn would be noise, not a signal."""
+    engine, _, _ = build_engine(core, fixture_context, observability=RecordingSink())
+    with caplog.at_level(logging.ERROR, logger=AUDIT_LOGGER_NAME):
+        response = engine.handle_request(request())
+
+    assert response.text == ANSWER
+    assert audit_gap_records(caplog) == []
+
+
+def test_ob3_the_alert_carries_only_the_permitted_operational_fields(
+    core: CoreBundle, fixture_context: ResolvedContext, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Event type, project, conversation, failure class — and nothing else."""
+    engine, _, _ = build_engine(core, fixture_context, observability=ExplodingSink())
+    with caplog.at_level(logging.ERROR, logger=AUDIT_LOGGER_NAME):
+        engine.handle_request(request(conversation_id="conv-gap"))
+
+    message = audit_gap_records(caplog)[0].getMessage()
+    assert "runtime.turn_completed" in message
+    assert FIXTURE_ID in message
+    assert "conv-gap" in message
+    assert "RuntimeError" in message
+
+
+def test_ob3_the_alert_leaks_no_customer_or_infrastructure_data(
+    core: CoreBundle, fixture_context: ResolvedContext, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The alert is a compliance signal, not a second disclosure channel.
+
+    The exception's *message* is deliberately excluded: a store error can embed
+    a database path, and a future one could embed a connection string. Only the
+    exception's class name is reported.
+    """
+    secret = "sk-abcdefghijklmnopqrstuvwx"  # a fabricated value, for the assertion
+    leaky_path = "/var/secret-place/audit.sqlite3"
+
+    class LeakySink:
+        def log_event(self, event: AuditEvent) -> AuditEvent:
+            del event
+            raise RuntimeError(f"cannot write {leaky_path} using {secret}")
+
+        def query_audit_log(self, filters: AuditFilters) -> tuple[AuditEvent, ...]:
+            del filters
+            return ()
+
+    engine, _, _ = build_engine(core, fixture_context, observability=LeakySink())
+    with caplog.at_level(logging.ERROR, logger=AUDIT_LOGGER_NAME):
+        engine.handle_request(request("my phone number is 555 0100"))
+
+    record = audit_gap_records(caplog)[0]
+    rendered = record.getMessage() + " " + str(record.args)
+    for forbidden in (secret, leaky_path, "555", "phone", ANSWER, "cannot write"):
+        assert forbidden not in rendered, f"the alert leaked {forbidden!r}"
+
+
+def test_ob3_the_alert_does_not_forward_the_audit_payload(
+    core: CoreBundle, fixture_context: ResolvedContext, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The event is never serialized wholesale into the alert."""
+    engine, _, _ = build_engine(core, fixture_context, observability=ExplodingSink())
+    with caplog.at_level(logging.ERROR, logger=AUDIT_LOGGER_NAME):
+        engine.handle_request(request())
+
+    rendered = audit_gap_records(caplog)[0].getMessage()
+    for payload_key in ("blocked", "escalate", "degraded", "channel"):
+        assert payload_key not in rendered
+
+
+def test_ob3_a_failing_alert_path_does_not_change_the_response(
+    core: CoreBundle,
+    fixture_context: ResolvedContext,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§15.9's first half outranks its second.
+
+    Both the audit write *and* the alert fail. The turn must still complete
+    byte-identically — reporting a gap may never cost the turn that exposed it.
+    """
+    from runtime.runtime_engine import engine as engine_module
+
+    healthy, _, _ = build_engine(core, fixture_context, observability=RecordingSink())
+    expected = healthy.handle_request(request())
+
+    def exploding_error(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise OSError("the log stream is gone")
+
+    monkeypatch.setattr(engine_module._AUDIT_LOGGER, "error", exploding_error)
+    broken, _, _ = build_engine(core, fixture_context, observability=ExplodingSink())
+    actual = broken.handle_request(request())
+
+    assert actual == expected
+    assert not actual.blocked
+    assert not actual.degraded
+    assert not actual.escalate
+
+
+def test_ob3_the_non_blocking_guarantee_is_byte_identical(
+    core: CoreBundle, fixture_context: ResolvedContext, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Adding the alert changed nothing about what the customer receives."""
+    healthy, _, _ = build_engine(core, fixture_context, observability=RecordingSink())
+    broken, _, _ = build_engine(core, fixture_context, observability=ExplodingSink())
+    with caplog.at_level(logging.ERROR, logger=AUDIT_LOGGER_NAME):
+        assert broken.handle_request(request()) == healthy.handle_request(request())
+
+
+def test_ob3_the_alert_is_stdlib_logging_and_nothing_more() -> None:
+    """No metrics backend, no queue, no worker, no dependency, no new API."""
+    import inspect
+
+    from runtime.runtime_engine import engine as engine_module
+
+    assert isinstance(engine_module._AUDIT_LOGGER, logging.Logger)
+    params = set(inspect.signature(RuntimeEngine.__init__).parameters)
+    for forbidden in ("alerter", "metrics", "on_audit_failure", "alert_sink"):
+        assert forbidden not in params
+
+    tree = ast.parse((PACKAGE / "engine.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert alias.name.split(".")[0] in {"logging"}, alias.name
+        if isinstance(node, ast.Attribute):
+            assert node.attr not in {"Queue", "Thread", "Lock", "submit"}, node.attr
+
+
+def test_ob3_only_the_engine_may_import_logging() -> None:
+    """The allowance is one file wide, and narrowly justified.
+
+    `stages.py`, `activation.py` and `errors.py` still may not log: the audit gap
+    is reported at the one frame that holds the failure, and nowhere else.
+    """
+    for path, tree in trees():
+        if path.name == "engine.py":
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert alias.name.split(".")[0] != "logging", path.name
+            if isinstance(node, ast.ImportFrom):
+                assert (node.module or "").split(".")[0] != "logging", path.name
 
 
 @pytest.mark.parametrize(

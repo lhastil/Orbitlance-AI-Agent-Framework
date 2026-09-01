@@ -12,11 +12,13 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Twelve open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
-RE-3, RE-4, RE-5, AUDIT-6, OB-3**, recorded during Modules 10, 11, 14 and 15,
+**Eleven open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
+RE-3, RE-4, RE-5, AUDIT-6**, recorded during Modules 10, 11, 14 and 15,
 and the §14 post-implementation audit. **OB-1 closed on 2026-09-01** when the
 production path was wired to a durable SQLite audit store and proven end to end;
-**RE-4 stays open** because its monitoring half is OB-3, which does not. None blocks the module it was found in; each needs a
+**OB-3 closed on 2026-09-01** when §15.9's audit-gap alert was implemented at the
+Runtime Engine's containment guard. **RE-4 stays open** on a narrower ground than
+before — see its reconciliation entry. None blocks the module it was found in; each needs a
 system-owner decision because closing it means ruling between frozen clauses,
 supplying a policy the framework does not define, or amending a frozen artifact.
 
@@ -100,7 +102,7 @@ one class.
 | **AUDIT-7** | **`RuntimeEngine` inspection surface beyond §14.6** | **Documentation / Reporting** |
 | **OB-1** | **Durable audit persistence** | **Closed** — production path wired to SQLite |
 | **OB-2** | **§15.12(d) duplicate-ID scenario cannot arise; not faked** | **Documentation / Reporting** |
-| **OB-3** | **§15.9 audit-gap alert has no seam** | **Architecture Issue** |
+| **OB-3** | **§15.9 audit-gap alert has no seam** | **Closed** — alert raised at §14's containment guard |
 | **PA-4** | **§4 cites an assembly order in a section that does not exist** | **Documentation / Reporting** |
 | **PA-5** | **Playbook provenance check inspected only the first source** | **Closed** |
 | **PA-6** | **Runtime provenance cannot prove content origin** | **Documentation / Reporting** |
@@ -1765,7 +1767,7 @@ must be visible rather than inferred from the fact that tests pass.
 | 15.7 | leaf module | **PASS** — imports `runtime.models` and the standard library only |
 | 15.8 | **durable**, ideally append-only store | **PARTIAL** — append-only ✅, durable ❌, see **OB-1** |
 | 15.9 | store failure must not block the conversation | **PASS** |
-| 15.9 | must raise its own alert/metric | **OPEN** — see **OB-3** |
+| 15.9 | must raise its own alert/metric | **PASS** — raised at §14's containment guard, **OB-3** closed 2026-09-01 |
 | 15.10 | events immutable once written | **PASS** |
 | 15.11 | structured export for compliance reporting | **DEFERRED** — future extension point |
 | 15.12(a) | log and retrieve | **PASS** |
@@ -1854,6 +1856,11 @@ not. **OB-2** is unaffected: the adapter carries **no `UNIQUE` constraint and no
 duplicate detection**, deliberately, because a check that can never fire is
 worse than an honest absence.
 
+**Update, 2026-09-01.** Both cross-references above have since moved: the
+production path was wired to this adapter (closing **OB-1**), and a failing
+store is no longer silent (closing **OB-3**). **RE-4 still stays open**, now for
+the reason given in its own reconciliation entry rather than either of these.
+
 **To close OB-1:** authorize production wiring, including how the database path
 reaches `activate()` — the adapter takes it explicitly at construction and there
 is no configuration mechanism in this repository to supply it.
@@ -1909,6 +1916,11 @@ no lock, thread, async surface or pool was introduced.
 activation is still silent, because §15.9's alert/metric has no seam. **RE-4
 therefore also remains open**; only its durability half is resolved.
 
+**Update, 2026-09-01 — OB-3 has since closed**, in a separate change that added
+the alert to §14's containment guard. It did not touch this adapter, the store
+Protocol, the logger, or the wiring described above. **RE-4 remains open**, on
+the narrower ground recorded in its own entry.
+
 ---
 
 ### OB-2 — §15.12(d)'s duplicate-ID scenario cannot arise, and is not faked
@@ -1941,27 +1953,52 @@ Pinned by `test_an_id_a_caller_puts_on_an_event_is_replaced`,
 
 ### OB-3 — §15.9's audit-gap alert has no seam to be raised through
 
-**Class: Architecture Issue** · **Open.**
+**Class: Architecture Issue** · **Closed 2026-09-01.**
 
-§15.9 has two halves. The first — *"must not block the conversation from
-proceeding"* — is satisfied: the Runtime Engine guards the logger call, and a
-store that raises changes nothing about the `RuntimeResponse`.
+**Was:** §15.9 has two halves. The first — *"must not block the conversation from
+proceeding"* — was satisfied: the Runtime Engine guards the logger call, and a
+store that raises changes nothing about the `RuntimeResponse`. The second was
+not: *"it must raise its own alert/metric, since a silent audit-logging gap is
+itself a Compliance risk."* A failing audit store was silent, which is exactly
+the Compliance risk the clause names.
 
-The second is not: *"it must raise its own alert/metric, since a silent
-audit-logging gap is itself a Compliance risk."*
+The entry recorded that the repository had no metrics or alerting seam, and that
+inventing a monitoring abstraction to satisfy the wording was out of scope.
 
-**The repository has no metrics or alerting seam.** `logging` appears once, in
-`validation/pipeline.py`, logging a rule id. Inventing a monitoring abstraction
-or an external dependency to satisfy the wording was out of scope, and a
-speculative one would be surface with no consumer.
+**Now: closed, without inventing one.** The alert is a standard-library
+`logging` call, and nothing more — no Alert or Metric Protocol, no injected
+callback, no new constructor parameter, no counter, no metrics backend, no third
+-party dependency, no queue, no worker, no async delivery, no retry. `logging`
+was already in the repository (`validation/pipeline.py`), and where its output
+goes is a deployment decision, which is the posture every other external
+dependency here takes. `pyproject.toml` was not touched.
 
-The smallest honest seam identified — and **not** implemented, because it needs
-a ruling — is a callback on the Runtime Engine's containment guard, invoked when
-`log_event` raises. It changes no frozen contract and adds no dependency, but it
-introduces a public abstraction §15 does not name.
+**Where it lives: `RuntimeEngine._observe`, not `AuditLogger`.** The ruled
+reason is structural. `AuditLogger.log_event` *raises* on store failure,
+deliberately and by contract; §14's guard is the frame that holds the exception,
+and §15.3 keeps the logger a pure recorder. The Audit Logger gained no alerting
+responsibility, and its failure contract is unchanged.
 
-**Until then a failing audit store is silent**, which is exactly the Compliance
-risk §15.9 names. Pinned by `test_the_logger_raises_no_alert_of_its_own`.
+**What the alert carries: four fields.** The audit event type that was lost, the
+`project_id`, the `conversation_id`, and `type(failure).__name__`. Nothing else.
+The exception's *message* is deliberately excluded because
+`SqliteAuditLogStoreError` embeds the database path and a future store could
+embed a connection string; nothing from `AuditEvent.payload` is forwarded, and
+the event is never serialized wholesale. An alert about a disclosure failure
+must not become a second disclosure channel.
+
+**Ordering: §15.9's first half outranks its second.** A logging handler that
+itself raises — a full disk, a broken formatter, a misconfigured stream — is
+swallowed. Reporting the gap may never cost the turn that exposed it.
+
+**Proven by** nine tests in `tests/runtime_engine/test_runtime_engine.py`
+(`test_ob3_*`): exactly one ERROR on a failing store, none on a healthy turn,
+the four permitted fields present, no credential / path / message / answer /
+payload key reaching the alert, a byte-identical `RuntimeResponse` when the
+store fails, and a byte-identical one when the *alert* fails too. Each was
+confirmed load-bearing by mutating the engine and watching them fail.
+`test_the_logger_raises_no_alert_of_its_own` was not deleted: it now pins the
+**division of responsibility** — the observability package must stay silent.
 
 ---
 
@@ -1985,12 +2022,26 @@ OB-1's production wiring means `activate()` now builds a `SqliteAuditLogStore`
 over `ORBITLANCE_AUDIT_DB`, so the trail survives the process and is readable
 afterwards.
 
-**RE-4 does not close, because OB-3 does not.** §15.9 has two halves — the
-conversation must not be blocked (satisfied, and now proven against a durable
-store), and *"it must raise its own alert/metric, since a silent audit-logging
-gap is itself a Compliance risk"* (unsatisfied; no metrics seam exists). A
-durable store that fails after activation is still silent, which is exactly the
-risk the clause names. **"Durable" is now true; "monitored" is not.**
+**Update, 2026-09-01 — the monitoring half is resolved too; RE-4 still stays
+open, on a narrower ground.** OB-3 closed: a store that fails after activation
+now raises an ERROR naming the lost event type, the project, the conversation
+and the failure class. **"Durable" is true; "monitored" is now true as well**,
+and both of the blockers this entry previously named are closed.
+
+**Why RE-4 nevertheless does not close.** Its subject is *the default runtime* —
+and the default is still not the production path. `activate()` builds a durable,
+monitored trail; `RuntimeEngine(...)` constructed directly with `AuditLogger()`
+does not. That configuration is what every test in this repository uses, it is a
+public and supported construction, and it loses the trail at process exit
+**without raising anything** — the writes succeed, into memory, and the alert
+never fires, because nothing failed. A silent non-durable trail is the same
+Compliance shape RE-4 was opened for, arrived at by a different route.
+
+Closing RE-4 therefore needs a decision this register cannot make for itself:
+whether the direct constructor should be narrowed, whether `AuditLogger()`'s
+in-memory default should stop being a default, or whether "the default runtime"
+should be redefined to mean the composition root. That is the same escape-hatch
+question AUDIT-2 records, and it should be settled once, for both.
 
 ---
 

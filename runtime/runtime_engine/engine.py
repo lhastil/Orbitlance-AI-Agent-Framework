@@ -103,11 +103,22 @@ short-circuits the turn, and those are the turns most worth recording.
 §15.9's rule that a logging failure *"must not block the conversation from
 proceeding"* is honoured by a thin guard around the call — the one piece of
 audit-adjacent code that stays here, because containment is a property of the
-conversation, not of the log. What the guard cannot do is raise the alert §15.9
-also asks for: the repository has no metrics seam (OB-3).
+conversation, not of the log.
+
+That guard now also raises the alert §15.9's second half asks for (OB-3). It
+lives here rather than in the Audit Logger for a structural reason: the logger
+*raises* on store failure, deliberately and by contract, and this is the frame
+that holds the exception. `AuditLogger.log_event` gained no alerting
+responsibility, and §15.3 keeps it a pure recorder.
+
+The alert is a standard-library logging call carrying four fields — event type,
+project, conversation, failure class — and nothing else. No metrics backend, no
+queue, no worker, no dependency; the deployment decides where its logs go.
 """
 
 from __future__ import annotations
+
+import logging
 
 from runtime.budget import TokenBudgetManager
 from runtime.guardrail import GuardrailEngine
@@ -125,6 +136,12 @@ from runtime.session import SessionManager
 from runtime.tool_executor import ToolExecutor
 from runtime.workflow_router import WorkflowRouter
 from runtime.workflow_state import WorkflowStateManager
+
+#: Where an audit gap is reported (§15.9, OB-3). A standard-library logger and
+#: nothing more: no metrics backend, no queue, no worker, no dependency. The
+#: deployment decides where its logs go, which is the same posture every other
+#: external dependency in this framework takes.
+_AUDIT_LOGGER = logging.getLogger(__name__)
 
 #: Event types this engine emits. One per turn, exactly one of these.
 EVENT_TURN_COMPLETED = "runtime.turn_completed"
@@ -343,6 +360,11 @@ class RuntimeEngine:
         conversation from proceeding"*. The payload carries only outcome facts —
         never the message, the prompt, or the provider's text — because §15.3
         forbids logging PII beyond an allowance nobody has written.
+
+        **A failure is contained *and* reported** — §15.9's other half: *"it must
+        raise its own alert/metric, since a silent audit-logging gap is itself a
+        Compliance risk."* Containment alone was the whole of OB-3: the audit
+        write failed and the runtime said nothing.
         """
         try:
             self._audit.log_event(
@@ -353,5 +375,43 @@ class RuntimeEngine:
                     payload=payload,
                 )
             )
-        except Exception:  # noqa: BLE001 - §15.9: never blocks the conversation
+        except Exception as failure:  # noqa: BLE001 - §15.9: contain, then report
+            self._alert_audit_gap(event_type, request, failure)
+
+    @staticmethod
+    def _alert_audit_gap(
+        event_type: str, request: RuntimeRequest, failure: Exception
+    ) -> None:
+        """Report an audit write that did not happen (§15.9, OB-3).
+
+        **Four fields, and no fifth.** The event type that was lost, the project
+        and conversation it belonged to, and the *class* of the failure. That is
+        enough for an operator to know an audit gap exists, which project it
+        affects, and roughly why — and it is the most that can be said without
+        turning a compliance alert into a new disclosure channel.
+
+        **The exception's message is deliberately excluded.**
+        `SqliteAuditLogStoreError` embeds the database path, and a future store
+        could embed a connection string. `type(failure).__name__` carries the
+        diagnosis without carrying the infrastructure.
+
+        Nothing from `AuditEvent.payload` is forwarded, and the event is never
+        serialized wholesale: the payload is outcome-only today, but this is an
+        alert about a failure, not a second copy of the record.
+
+        **It cannot become a conversation failure.** A logging handler that
+        raises — a full disk, a broken formatter, a misconfigured stream — is
+        swallowed here. §15.9's first half outranks its second: reporting the
+        gap must never cost the turn that exposed it.
+        """
+        try:
+            _AUDIT_LOGGER.error(
+                "audit gap: a %s event for project %s conversation %s was not "
+                "recorded (%s)",
+                event_type,
+                request.project_id,
+                request.conversation_id,
+                type(failure).__name__,
+            )
+        except Exception:  # noqa: BLE001 - the alert must never cost the turn
             return
