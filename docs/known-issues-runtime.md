@@ -1786,7 +1786,9 @@ must be visible rather than inferred from the fact that tests pass.
 
 ### OB-1 — Audit persistence is in-memory and therefore not durable
 
-**Class: Architecture Issue** · Ruled for this milestone · **Open.**
+**Class: Architecture Issue** · Ruled for this milestone. ✅ **CLOSED 2026-09-01**
+— see *✅ RESOLVED 2026-09-01* below. The dated layers between are how it got
+there, not the current state.
 
 §15.8 names the external dependency as *"a durable, ideally append-only log
 store."* This milestone implements the seam — an `AuditLogStore` Protocol — and
@@ -1865,8 +1867,8 @@ worse than an honest absence.
 
 **Update, 2026-09-01.** Both cross-references above have since moved: the
 production path was wired to this adapter (closing **OB-1**), and a failing
-store is no longer silent (closing **OB-3**). **RE-4 still stays open**, now for
-the reason given in its own reconciliation entry rather than either of these.
+store is no longer silent (closing **OB-3**). **RE-4 has since closed too**
+(2026-09-01), under the activation-invariant ruling recorded in this section.
 
 **To close OB-1:** authorize production wiring, including how the database path
 reaches `activate()` — the adapter takes it explicitly at construction and there
@@ -1925,8 +1927,8 @@ therefore also remains open**; only its durability half is resolved.
 
 **Update, 2026-09-01 — OB-3 has since closed**, in a separate change that added
 the alert to §14's containment guard. It did not touch this adapter, the store
-Protocol, the logger, or the wiring described above. **RE-4 remains open**, on
-the narrower ground recorded in its own entry.
+Protocol, the logger, or the wiring described above. **RE-4 has since closed
+too** (2026-09-01), under the activation-invariant ruling.
 
 ---
 
