@@ -42,7 +42,7 @@ The frozen specification defines fifteen runtime modules. All fifteen are implem
 | 12 | Session Manager | ✅ Implemented |
 | 13 | Validation Layer | ✅ Implemented |
 | 14 | **Runtime Engine** | ✅ **Implemented** |
-| 15 | Observability / Audit Logger | ✅ Implemented — in-memory audit store; not durable |
+| 15 | Observability / Audit Logger | ✅ Implemented — durable SQLite store on the production activation path; no retention policy |
 
 Where a row is qualified, the limitation is deliberate and recorded in
 [docs/known-issues-runtime.md](docs/known-issues-runtime.md) rather than left to be discovered.
@@ -51,7 +51,7 @@ Alongside module 9, one concrete provider adapter is implemented: **Google Gemin
 
 ### Verification
 
-- **993 passed, 16 skipped** in the offline suite — no credential or network required. The 16 skipped are the live Gemini tests below, which the offline suite excludes. Figures as verified at the §15 milestone.
+- **1056 passed, 16 skipped** in the offline suite — no credential or network required. The 16 skipped are the live Gemini tests below, which the offline suite excludes.
 - **16 / 16 live Gemini tests passing** against the real API. These are opt-in and are excluded from the offline suite.
 
 ## Repository structure
@@ -123,6 +123,8 @@ Orbitlance-AI-Agent-Framework/
 pip install -e ".[dev]"     # framework + test tooling
 pytest -q                   # the offline suite
 ```
+
+The production activation path requires **`ORBITLANCE_AUDIT_DB`** — the path its durable audit records are written to. `activate()` raises `AuditStoreNotConfiguredError` when it is unset, so a runtime that cannot keep an audit trail does not start. The offline suite supplies its own temporary database and needs no setup.
 
 The framework has **no runtime dependencies**. Provider SDKs are optional extras, installed only when a given adapter is used:
 
