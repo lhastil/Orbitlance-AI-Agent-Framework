@@ -11,6 +11,12 @@ why AUDIT-1 and AUDIT-2 were reachable at all.
       → Validator            → ValidationResult
       → RuntimeEngine (which resolves the provider and derives its own budget)
 
+**`activate` is the production activation path, and constructing `RuntimeEngine`
+directly is a lower-level/test/embedded seam that is not one** — a distinction
+that matters because durable audit persistence is an invariant of *this*
+function rather than of the constructor (ruling of 2026-09-01, recorded in
+`docs/known-issues-runtime.md`).
+
 **This is a construction function, not a second orchestrator.** §14.1 names one
 module that calls the others in sequence, and `RuntimeEngine.handle_request` is
 that path. Nothing here handles a message, builds a prompt, checks a guardrail,

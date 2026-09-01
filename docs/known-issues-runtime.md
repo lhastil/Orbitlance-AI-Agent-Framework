@@ -12,13 +12,13 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Eleven open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
-RE-3, RE-4, RE-5, AUDIT-6**, recorded during Modules 10, 11, 14 and 15,
+**Ten open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
+RE-3, RE-5, AUDIT-6**, recorded during Modules 10, 11, 14 and 15,
 and the §14 post-implementation audit. **OB-1 closed on 2026-09-01** when the
 production path was wired to a durable SQLite audit store and proven end to end;
 **OB-3 closed on 2026-09-01** when §15.9's audit-gap alert was implemented at the
-Runtime Engine's containment guard. **RE-4 stays open** on a narrower ground than
-before — see its reconciliation entry. None blocks the module it was found in; each needs a
+Runtime Engine's containment guard; **RE-4 closed on 2026-09-01** under the
+**activation-invariant ruling** recorded below. None blocks the module it was found in; each needs a
 system-owner decision because closing it means ruling between frozen clauses,
 supplying a policy the framework does not define, or amending a frozen artifact.
 
@@ -89,7 +89,7 @@ one class.
 | **RE-1** | **Module 4 still accepts an unbudgeted assembly; §14 never uses it** | **Architecture Issue** |
 | **RE-2** | **`RuntimeRequest` / `RuntimeResponse` are framework-introduced** | **Documentation / Reporting** |
 | **RE-3** | **§14 establishes no concurrent runtime contract** | **Architecture Issue** |
-| **RE-4** | **The default runtime keeps no audit trail** | **Architecture Issue** |
+| **RE-4** | **The default runtime keeps no audit trail** | **Closed** — §15 implemented; durability is an activation invariant |
 | **RE-5** | **§14 composes no customer-facing fallback text** | **Architecture Issue** |
 | **RE-6** | **A blocked answer is not recorded as an agent turn** | **Documentation / Reporting** |
 | **RE-7** | **§14 publishes no camelCase alias; the convention is unsettled** | **Documentation / Reporting** |
@@ -1271,7 +1271,8 @@ concurrency asymmetry.
 
 ### RE-4 — The default runtime keeps no audit trail
 
-**Class: Architecture Issue** · Ruling D-4(a).
+**Class: Architecture Issue** · Ruling D-4(a). ✅ **CLOSED 2026-09-01** — see
+*RE-4 — reconciliation* in the §15 section for the closure and its exact limits.
 
 §14.2 ends its pipeline with observability logging and §15 is not implemented.
 §14 defines a minimal `ObservabilitySink` Protocol — `record(event_type,
@@ -1531,6 +1532,12 @@ That escape hatch is deliberate — the constructor is the seam tests and future
 callers use directly, and closing it would mean either hiding the constructor or
 making the managers project-aware, which §12.6/§7.6 forbid. **This entry does
 not claim global impossibility.**
+
+**Cross-reference:** this entry is the **precedent** for the activation-invariant
+ruling of 2026-09-01 (recorded in the §15 section), which generalises the same
+production-path-versus-constructor distinction to durable audit persistence.
+**AUDIT-2's own status, classification and amendment are unchanged by that
+ruling**, and the distinction above must still not be collapsed.
 
 The approved defence-in-depth measure — `SessionStage` verifying
 `ConversationContext.project_id` against the activated project — was **not
@@ -2002,7 +2009,64 @@ confirmed load-bearing by mutating the engine and watching them fail.
 
 ---
 
+### Ruling, 2026-09-01 — where the durability invariant lives
+
+**Accepted architectural ruling:**
+
+> **Durable audit persistence is a production activation invariant, not a
+> universal `RuntimeEngine` constructor invariant.**
+
+| | |
+|---|---|
+| **`activate(...)`** | **is** the production activation path, and owns durable audit persistence. It constructs the durable store, and **must not** silently fall back to `InMemoryAuditLogStore` |
+| **`RuntimeEngine(...)` directly** | a **lower-level / test / embedded seam**. It remains public and unchanged — and is **not** the production activation path, and must not be documented as one |
+| **`AuditLogger()` in-memory default** | remains **acceptable outside production activation** |
+
+**What the frozen specification actually requires.** §15.8 names *"a durable,
+ideally append-only log store"* under **External Dependencies** — a statement
+about what the deployed module depends on. §15 defines no constructor, no
+default and no instantiation contract anywhere; §15.6 is `logEvent` ·
+`queryAuditLog` and nothing more. No frozen clause requires every possible
+construction to be durable.
+
+**The specification supports this positively, not merely by silence.** §14.12(a)
+requires a unit-test scenario of *"a full successful request through every module
+with **test doubles**"* — so the spec itself mandates a construction path in
+which every collaborator is a double. A universal constructor-level durability
+invariant would put §14's own required scenario in tension with §15.8. And
+§14.2 already places the go/no-go decision *"at project-activation/deploy time —
+not re-validated on every single message"*, so **activation** is the spec's own
+vocabulary for the locus where invariants are established once.
+
+**Precision worth keeping.** `activate()` is framework-introduced: §14.6's frozen
+Public Interface is `handleRequest(request) -> RuntimeResponse` and names no
+activation function (this is why **AUDIT-4** existed). The ruling therefore
+attaches a frozen requirement to a non-frozen seam. That is permissible because
+the spec is silent on *where* the store is configured, leaving it a free
+implementation decision — and **AUDIT-2 already made the identical decision** for
+sessions and workflow state. This ruling generalises that precedent to the audit
+log; it does not open new ground.
+
+**No code change was required to adopt it.** `activate()` already constructs
+`AuditLogger(SqliteAuditLogStore(...))`, already fails fast with
+`AuditStoreNotConfiguredError` rather than falling back, and the constructor is
+untouched. Pinned by `test_the_production_path_uses_the_durable_store`,
+`test_activation_wires_the_adapter_and_no_longer_the_in_memory_store` (which
+asserts `InMemoryAuditLogStore` does not appear in the composition root),
+`test_the_in_memory_store_remains_the_loggers_default`, and the three
+activation-failure tests.
+
+**What this ruling does not do:** it does not touch **AUDIT-2**, whose subject is
+cross-project *conversation* contamination through shared session and workflow
+stores — a different invariant, and one where the constructor hazard is real
+because it can reach a third party's conversation. AUDIT-2's status,
+classification and amendment stand exactly as recorded.
+
+---
+
 ### RE-4 — reconciliation
+
+**Closed 2026-09-01.**
 
 **Was:** *"The default runtime keeps no audit trail"* — the engine defaulted to
 `NullObservabilitySink`, which discarded every event.
@@ -2028,20 +2092,30 @@ now raises an ERROR naming the lost event type, the project, the conversation
 and the failure class. **"Durable" is true; "monitored" is now true as well**,
 and both of the blockers this entry previously named are closed.
 
-**Why RE-4 nevertheless does not close.** Its subject is *the default runtime* —
-and the default is still not the production path. `activate()` builds a durable,
-monitored trail; `RuntimeEngine(...)` constructed directly with `AuditLogger()`
-does not. That configuration is what every test in this repository uses, it is a
-public and supported construction, and it loses the trail at process exit
-**without raising anything** — the writes succeed, into memory, and the alert
-never fires, because nothing failed. A silent non-durable trail is the same
-Compliance shape RE-4 was opened for, arrived at by a different route.
+**Update, 2026-09-01 — RE-4 is CLOSED** under the **activation-invariant
+ruling** recorded above.
 
-Closing RE-4 therefore needs a decision this register cannot make for itself:
-whether the direct constructor should be narrowed, whether `AuditLogger()`'s
-in-memory default should stop being a default, or whether "the default runtime"
-should be redefined to mean the composition root. That is the same escape-hatch
-question AUDIT-2 records, and it should be settled once, for both.
+**It closes on the condition the entry set for itself.** RE-4's own text reads
+*"To close it: implement §15."* §15 is implemented; the production path is
+durable (**OB-1**) and no longer silent on a gap (**OB-3**). Every element of
+the recorded defect is gone: there is no `NullObservabilitySink`, `ports.py` was
+deleted, and `audit` is a **required** constructor parameter, so the *"default"*
+the title names does not exist to keep no trail.
+
+**A correction to the previous update, stated rather than quietly dropped.** The
+paragraph this replaces kept RE-4 open on the ground that `RuntimeEngine(...)`
+built directly with `AuditLogger()` still loses its trail silently. That ground
+was an extension of RE-4 beyond what RE-4 records, and it misplaced the seam:
+`RuntimeEngine` has **no audit default at all**, so nothing about it is silent —
+a caller must pass a logger explicitly. The in-memory behaviour comes from
+`AuditLogger()`'s own default, one layer down. Under the ruling above that
+default is acceptable outside production activation, so the observation is not a
+defect and is no longer carried as one.
+
+**What is *not* claimed by this closure:** that every possible construction keeps
+a durable trail. It does not, deliberately. The claim is narrower and exact —
+**the production activation path keeps a durable, monitored, queryable audit
+trail**, and that path is `activate()`.
 
 ---
 
