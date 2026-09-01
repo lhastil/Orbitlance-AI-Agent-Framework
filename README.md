@@ -20,11 +20,11 @@ Nothing in `core/` mentions a client, and nothing in `projects/` re-implements f
 
 The framework is **under active implementation**. The architecture is frozen (`v1.0-architecture-freeze`) and the runtime is being built module by module against it.
 
-**The Runtime Engine is not implemented.** There is no end-to-end request lifecycle yet: the modules below work and are tested individually, but nothing yet orchestrates them into a complete request → response flow. This repository is not ready to serve live traffic.
+**The Runtime Engine is implemented**, and the end-to-end request → response lifecycle runs: a project is loaded, resolved and validated at activation, and a request then passes through session handling, both guardrail checkpoints, budgeted prompt assembly, the provider call, workflow routing and state commit, the tool seam, and audit logging. This is verified offline against a test-fixture project with a conforming provider double; it has not been exercised against a live provider end to end, and several modules carry the deliberate limitations the table above records. This repository is not ready to serve live traffic.
 
 ### Runtime module status
 
-The frozen specification defines fifteen runtime modules. Eight are implemented, plus one concrete provider adapter.
+The frozen specification defines fifteen runtime modules. All fifteen are implemented, plus one concrete provider adapter. Where a module is implemented with a deliberate limitation, the table says so.
 
 | # | Module | Status |
 |---|---|---|
@@ -33,22 +33,25 @@ The frozen specification defines fifteen runtime modules. Eight are implemented,
 | 3 | Resolver | ✅ Implemented |
 | 4 | Prompt Assembler | ✅ Implemented |
 | 5 | Token Budget Manager | ✅ Implemented |
-| 6 | Workflow Router | ⬜ Not implemented |
-| 7 | Workflow State Manager | ⬜ Not implemented |
-| 8 | Guardrail Engine | ⬜ Not implemented |
+| 6 | Workflow Router | ✅ Implemented — structural routing only; no semantic classification |
+| 7 | Workflow State Manager | ✅ Implemented |
+| 8 | Guardrail Engine | ✅ Implemented — post-response checks; pre-flight applies no content rule |
 | 9 | Provider Interface | ✅ Implemented |
-| 10 | Provider Registry | ⬜ Not implemented |
-| 11 | Tool Executor | ⬜ Not implemented |
+| 10 | Provider Registry | ✅ Implemented |
+| 11 | Tool Executor | ✅ Implemented — no tool implementation is registered by default |
 | 12 | Session Manager | ✅ Implemented |
 | 13 | Validation Layer | ✅ Implemented |
-| 14 | **Runtime Engine** | ⬜ **Not implemented** |
-| 15 | Observability / Audit Logger | ⬜ Not implemented |
+| 14 | **Runtime Engine** | ✅ **Implemented** |
+| 15 | Observability / Audit Logger | ✅ Implemented — in-memory audit store; not durable |
+
+Where a row is qualified, the limitation is deliberate and recorded in
+[docs/known-issues-runtime.md](docs/known-issues-runtime.md) rather than left to be discovered.
 
 Alongside module 9, one concrete provider adapter is implemented: **Google Gemini 3.6 Flash**, verified against the real Gemini API.
 
 ### Verification
 
-- **565 offline tests passing** — no credential or network required.
+- **993 passed, 16 skipped** in the offline suite — no credential or network required. The 16 skipped are the live Gemini tests below, which the offline suite excludes. Figures as verified at the §15 milestone.
 - **16 / 16 live Gemini tests passing** against the real API. These are opt-in and are excluded from the offline suite.
 
 ## Repository structure
@@ -88,9 +91,16 @@ Orbitlance-AI-Agent-Framework/
 │   ├── resolver/             module 3
 │   ├── assembler/            module 4
 │   ├── budget/               module 5
+│   ├── workflow_router/      module 6
+│   ├── workflow_state/       module 7
+│   ├── guardrail/            module 8
 │   ├── provider/             module 9 + provider adapters
+│   ├── provider_registry/    module 10
+│   ├── tool_executor/        module 11
 │   ├── session/              module 12
-│   └── validation/           module 13
+│   ├── validation/           module 13
+│   ├── runtime_engine/       module 14 + the activation composition root
+│   └── observability/        module 15
 │
 ├── tests/
 └── assets/                   branding assets and diagrams
@@ -128,3 +138,4 @@ pip install -e ".[gemini]"  # only if using the Gemini adapter
 - [docs/development-guidelines.md](docs/development-guidelines.md) — how to work in this repository
 - [docs/adr/](docs/adr/) — architecture decision records
 - [docs/known-issues.md](docs/known-issues.md) — tracked architectural issues
+- [docs/known-issues-runtime.md](docs/known-issues-runtime.md) — tracked runtime implementation issues
