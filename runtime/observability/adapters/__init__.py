@@ -8,11 +8,12 @@ a structural test enforces that.
 
 **This package deliberately imports none of its modules.** Doing so would make
 every adapter's backing system a hard import of the observability layer, and
-would give the framework a de facto default audit store. There is no default:
-`AuditLogger` still constructs an `InMemoryAuditLogStore` when given none, and
-the production composition root still wires that one. An adapter is selected by
-explicit import and explicit construction, and the existence of one activates it
-for nothing.
+would give the framework a de facto default audit store. There is no
+package-level default: `AuditLogger` still constructs an `InMemoryAuditLogStore`
+when given none, and the production composition root explicitly imports and
+constructs this subtree's SQLite adapter. An adapter is selected by explicit
+import and explicit construction, and the existence of one activates it for
+nothing.
 
 The same pattern, and the same reasoning, as `runtime/provider/adapters/`.
 """

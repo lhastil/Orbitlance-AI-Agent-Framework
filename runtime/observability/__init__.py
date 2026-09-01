@@ -16,11 +16,13 @@ one-directionally.
 
 **What this milestone does not deliver**, each recorded rather than implied:
 
-* **durability** — the only store is in-memory, so §15.8 is partially met (OB-1);
+* **durability** — `InMemoryAuditLogStore` is not durable, but it is no longer
+  the production store: `activate()` wires a durable adapter over
+  `ORBITLANCE_AUDIT_DB` (**OB-1** closed 2026-09-01);
 * **duplicate-id rejection** — ids are generated per call, so §15.12(d)'s case
   cannot arise from outside this module and no fake check was written (OB-2);
-* **an alert on audit-gap** — §15.9 requires one and the repository has no
-  metrics seam to raise it through (OB-3);
+* **an alert on audit-gap** — raised by `RuntimeEngine._observe`, not here:
+  §15.3 keeps this module a pure recorder (**OB-3** closed 2026-09-01);
 * **retention, authorization, pagination** — undefined by §15, so undefined here.
 """
 

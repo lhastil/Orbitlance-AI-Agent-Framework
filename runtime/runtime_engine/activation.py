@@ -82,9 +82,9 @@ deadline is not triggered. Two processes sharing one database file is out of
 scope and unclaimed.
 
 **Still out of scope, and not claimed:** retention (records are kept
-indefinitely), access control (whatever the host filesystem provides), corrupt-
-record recovery, and the audit-gap alert §15.9 also asks for — **OB-3 remains
-open**, so a write that fails after activation is still silent.
+indefinitely), access control (whatever the host filesystem provides), and
+corrupt-record recovery. §15.9's audit-gap alert is **not** among them any more —
+`RuntimeEngine._observe` raises it (**OB-3** closed 2026-09-01).
 
 ## What is not yet reachable through this path
 

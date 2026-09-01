@@ -2,19 +2,20 @@
 
 §15.8 names the external dependency: *"A durable, ideally append-only log
 store."* `InMemoryAuditLogStore` satisfies append-only and loses everything when
-the process ends, which is what **OB-1** records. This module is the concrete
+the process ends, which is what **OB-1** recorded. This module is the concrete
 durable implementation of the same seam.
 
-**It is an adapter, not a default.** Nothing imports it — not
-`runtime/observability/__init__.py`, not `adapters/__init__.py`, not the
-composition root. `activate()` still constructs an `InMemoryAuditLogStore`, so
-**production audit persistence remains non-durable**. The distinction this
-module's existence does *not* erase:
+**It is an adapter, not a default.** `runtime/observability/__init__.py` and
+`adapters/__init__.py` import nothing from here; the **composition root** does,
+explicitly, and is the only importer —
+`test_only_the_composition_root_imports_the_adapter` pins that. `activate()`
+constructs this store over `ORBITLANCE_AUDIT_DB`, so **production audit
+persistence is durable** (**OB-1** closed 2026-09-01, **RE-4** closed
+2026-09-01).
 
-    durable adapter implemented   ≠   production audit persistence durable
-
-OB-1 moves to "a durable adapter exists"; wiring it into the production path is
-a separate, unauthorized decision, and **RE-4 stays open** until it is taken.
+Choosing where audit records live stays the composition root's decision. An
+adapter is selected by explicit import and explicit construction, and the
+existence of one activates it for nothing.
 
 ---
 

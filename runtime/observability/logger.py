@@ -48,10 +48,10 @@ clause look satisfied. Recorded as **OB-2**.
   are the only event types that exist; a future module can emit its own without
   amending anything here, which is what §15.2's *"from any module"* requires.
 * **No retention, no authorization, no pagination.** None is defined anywhere.
-* **No alert on its own failure.** §15.9 requires one; the repository has no
-  metrics or alerting seam, and inventing an external dependency to satisfy the
-  wording was explicitly out of scope. **§15.9 is therefore partially met** — the
-  non-blocking half holds, the alert half does not. Recorded as **OB-3**.
+* **No alert on its own failure**, by ruling. §15.9's alert is raised by
+  `RuntimeEngine._observe`, the frame that holds the exception this module
+  deliberately raises — §15.3 keeps this module a pure recorder, and alerting is
+  a decision about what a failure means. **OB-3** closed 2026-09-01.
 """
 
 from __future__ import annotations

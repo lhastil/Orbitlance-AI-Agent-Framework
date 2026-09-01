@@ -8,9 +8,11 @@ use (`ProjectCache`/`InMemoryProjectCache`, `SessionStore`/`InMemorySessionStore
 
 **The in-memory implementation is not durable, and this milestone does not
 pretend otherwise.** It keeps events for the life of the process and loses them
-when the process ends. §15.8 is therefore **partially met**: the seam a durable
-store attaches to exists, the durable store does not. Recorded as **OB-1** in
-`docs/known-issues-runtime.md`.
+when the process ends. §15.8 is met on the production activation path, where
+`activate()` constructs a durable adapter over this seam (**OB-1** closed
+2026-09-01). Which adapter is the composition root's decision and is deliberately
+not named here. This in-memory implementation remains `AuditLogger`'s default and
+the test store.
 
 Two operations, because §15.6 has two members and neither needs more. There is
 no delete, no update, no compaction and no retention sweep: §15.10 makes stored
