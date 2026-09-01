@@ -1764,7 +1764,7 @@ must be visible rather than inferred from the fact that tests pass.
 | 15.2 | accept structured events from any module | **PASS** — no central enum; any module may emit its own type |
 | 15.2 | timestamp them | **PASS** — ISO-8601 UTC, matching `SessionManager`'s convention |
 | 15.2 | tag with `project_id`/`conversation_id` | **PASS** |
-| 15.2 | persist them | **PARTIAL** — in memory only, see **OB-1** |
+| 15.2 | persist them | **PASS** — durable SQLite store on the production activation path, **OB-1** closed 2026-09-01 |
 | 15.2 | expose a query interface | **PASS** for the three ruled filters |
 | 15.3 | pure recorder, never decides | **PASS** — structurally asserted |
 | 15.3 | never logs raw credentials or disallowed PII | **PASS** — verified end to end |
@@ -1772,7 +1772,7 @@ must be visible rather than inferred from the fact that tests pass.
 | 15.5 | persistence confirmation; queryable records | **PASS** — `log_event` returns the stored event |
 | 15.6 | `logEvent` · `queryAuditLog` | **PASS** |
 | 15.7 | leaf module | **PASS** — imports `runtime.models` and the standard library only |
-| 15.8 | **durable**, ideally append-only store | **PARTIAL** — append-only ✅, durable ❌, see **OB-1** |
+| 15.8 | **durable**, ideally append-only store | **PASS** — durable SQLite store on the production activation path (**OB-1** closed 2026-09-01); append-only structurally. Durable per the ratified OB-1 ruling: an event survives the store object and is readable by a new store over the same path. Claims nothing about constructions off that path, and no multi-process, thread-safety, retention or access-control guarantee |
 | 15.9 | store failure must not block the conversation | **PASS** |
 | 15.9 | must raise its own alert/metric | **PASS** — raised at §14's containment guard, **OB-3** closed 2026-09-01 |
 | 15.10 | events immutable once written | **PASS** |
