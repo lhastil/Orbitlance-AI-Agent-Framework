@@ -96,7 +96,7 @@ one class.
 | **AUDIT-5** | **Channel semantics after the first turn** | **Documentation / Reporting** |
 | **AUDIT-6** | **A degraded turn always returns `escalate=False`** | **Architecture Issue** |
 | **AUDIT-7** | **`RuntimeEngine` inspection surface beyond §14.6** | **Documentation / Reporting** |
-| **OB-1** | **Audit persistence is in-memory and not durable (§15.8 partial)** | **Architecture Issue** |
+| **OB-1** | **Durable adapter exists; the production path is still in-memory (§15.8 partial)** | **Architecture Issue** |
 | **OB-2** | **§15.12(d) duplicate-ID scenario cannot arise; not faked** | **Documentation / Reporting** |
 | **OB-3** | **§15.9 audit-gap alert has no seam** | **Architecture Issue** |
 | **PA-4** | **§4 cites an assembly order in a section that does not exist** | **Documentation / Reporting** |
@@ -1766,6 +1766,63 @@ Protocol, and `activate` is the single place the in-memory one is constructed.
 
 Pinned by `test_a_durable_store_can_replace_the_in_memory_one` and
 `test_the_store_is_a_protocol_with_an_in_memory_implementation`.
+
+---
+
+#### Status update, 2026-09-01 — a durable adapter exists; **OB-1 remains open**
+
+`runtime/observability/adapters/sqlite_store.py` implements
+`SqliteAuditLogStore`, a durable `AuditLogStore` over the standard library's
+`sqlite3`. **No third-party dependency was added; `dependencies = []` still
+holds.** It is an optional adapter subtree structurally analogous to
+`runtime/provider/adapters/`: `adapters/__init__.py` imports no implementation,
+nothing in `runtime/` imports the module, and there is no default.
+
+Two claims that must not be collapsed:
+
+> **durable adapter implemented**  ≠  **production audit persistence durable**
+
+**`activate()` is unchanged and still constructs `InMemoryAuditLogStore`.**
+Production wiring — and the storage-path configuration it would require — is a
+separate decision that has not been taken. `test_the_production_path_still_uses_
+the_in_memory_store` asserts both the runtime object and the absence of
+`SqliteAuditLogStore` from `activation.py`.
+
+**§15.8 is therefore still only partially met**, and OB-1 stays open: the
+repository now *provides* a durable store, but the runtime does not *use* one.
+
+**What the adapter does claim.** "Durable" is defined minimally, by ruling: an
+appended event survives destruction of the store object and is readable by a
+newly constructed store over the same database path. Proven by
+`test_events_survive_destruction_of_the_store_object` and
+`test_two_stores_on_one_path_share_the_database`.
+
+**What it explicitly does not claim**, each recorded rather than implied:
+
+| Out of scope | State |
+|---|---|
+| Multi-process durability | **Not claimed.** No locking or coordination exists; two processes appending to one file is unaddressed |
+| Thread safety | **Not claimed.** RE-3 unchanged; ADR 0003's V-7 deadline **not triggered** |
+| Retention | **None.** Records are kept indefinitely until something outside the framework removes the database |
+| Access control | Whatever the host filesystem provides. No application-level authorization was invented |
+| Corrupt-record recovery | **None.** A malformed record raises `SqliteAuditLogStoreError`; it is never silently skipped, and no repair semantics exist |
+
+**Isolation, stated precisely.** Two stores constructed with the same path share
+one database file. `project_id` remains a field on every event and a query
+filter, and a `project_id` filter never returns another project's rows — but
+**shared physical storage does not provide the structural isolation that
+separate in-memory stores do**, and this entry does not claim it does. **AUDIT-2
+is unaffected**, because nothing wires shared storage into the production path.
+
+**Related entries:** **RE-4** stays open — the production path still keeps no
+durable trail. **OB-3** stays open — a failing store is still silent, adapter or
+not. **OB-2** is unaffected: the adapter carries **no `UNIQUE` constraint and no
+duplicate detection**, deliberately, because a check that can never fire is
+worse than an honest absence.
+
+**To close OB-1:** authorize production wiring, including how the database path
+reaches `activate()` — the adapter takes it explicitly at construction and there
+is no configuration mechanism in this repository to supply it.
 
 ---
 

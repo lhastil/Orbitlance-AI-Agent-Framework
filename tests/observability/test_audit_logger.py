@@ -73,11 +73,33 @@ class BrokenStore:
 
 
 def source_files() -> list[pathlib.Path]:
+    """The §15 **core**: storage-agnostic by design, and scanned as such."""
     return sorted(PACKAGE.glob("*.py")) + [MODEL_FILE]
+
+
+def all_source_files() -> list[pathlib.Path]:
+    """The core **and every adapter subtree**, recursively.
+
+    `source_files()` globs one directory. That was right while the package held
+    only the core, but it would let an adapter subtree escape the dependency
+    scan simply by existing one level down — and code is not made compliant by
+    being placed where a test does not look. This is the deliberate extension
+    (OB-1): the dependency scan below walks the whole package, and permits a
+    storage technology only inside `adapters/`.
+    """
+    return sorted(PACKAGE.rglob("*.py")) + [MODEL_FILE]
 
 
 def trees() -> list[tuple[pathlib.Path, ast.Module]]:
     return [(p, ast.parse(p.read_text(encoding="utf-8"))) for p in source_files()]
+
+
+def all_trees() -> list[tuple[pathlib.Path, ast.Module]]:
+    return [(p, ast.parse(p.read_text(encoding="utf-8"))) for p in all_source_files()]
+
+
+def is_adapter(path: pathlib.Path) -> bool:
+    return "adapters" in path.parts
 
 
 # =============================================================================
@@ -400,22 +422,55 @@ def test_the_package_imports_only_models() -> None:
 
 
 def test_no_third_party_filesystem_network_or_concurrency() -> None:
-    """No dependency was added, and no concurrency claim is made."""
+    """No dependency was added, and no concurrency claim is made.
+
+    Scanned **recursively**, so an adapter subtree cannot escape it (OB-1).
+
+    A storage technology is permitted **only** under `adapters/`, and only from
+    the standard library: `sqlite3`, `json` and `pathlib`. That is the whole
+    extension. The core — `logger.py`, `store.py`, `__init__.py` and the model —
+    stays exactly as strict as before, and every third-party package and every
+    concurrency primitive remains forbidden everywhere, adapters included.
+    """
     forbidden = {
         "sqlite3", "redis", "psycopg2", "pymongo", "requests", "httpx", "socket",
         "urllib", "pathlib", "os", "shutil", "threading", "asyncio", "multiprocessing",
         "json", "pickle",
     }
-    for path, tree in trees():
+    #: Standard-library storage, adapter-only. Nothing third-party, nothing
+    #: concurrent, nothing that reaches a network.
+    adapter_allowance = {"sqlite3", "json", "pathlib"}
+
+    for path, tree in all_trees():
+        banned = forbidden - adapter_allowance if is_adapter(path) else forbidden
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert alias.name.split(".")[0] not in forbidden, path.name
+                    assert alias.name.split(".")[0] not in banned, path.name
             if isinstance(node, ast.ImportFrom):
-                assert (node.module or "").split(".")[0] not in forbidden, path.name
+                assert (node.module or "").split(".")[0] not in banned, path.name
             assert not isinstance(node, ast.AsyncFunctionDef), path.name
             if isinstance(node, ast.Attribute):
                 assert node.attr not in {"Lock", "RLock", "acquire"}, path.name
+
+
+def test_the_core_never_gains_a_storage_technology() -> None:
+    """The allowance above is adapter-only, asserted from the other direction."""
+    for path, tree in trees():
+        assert not is_adapter(path)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert alias.name.split(".")[0] not in {
+                        "sqlite3", "json", "pathlib",
+                    }, path.name
+
+
+def test_every_package_file_is_covered_by_the_recursive_scan() -> None:
+    """The scan finds every `.py` under the package, not just the top level."""
+    scanned = {p.resolve() for p in all_source_files()}
+    for path in PACKAGE.rglob("*.py"):
+        assert path.resolve() in scanned, f"{path} escapes the structural scan"
 
 
 def test_the_store_is_a_protocol_with_an_in_memory_implementation() -> None:
