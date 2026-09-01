@@ -12,12 +12,18 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Ten open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, and RE-1,
-RE-3, RE-4, RE-5**, recorded during Modules 10, 11 and 14. None blocks the module
-it was found in; each needs a system-owner decision because closing it means
-ruling between frozen clauses, supplying a policy the framework does not define,
-or amending a frozen artifact. PA-3 was recorded as an Architecture Issue on
-2026-08-09 and
+**Fourteen open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
+RE-3, RE-4, RE-5, and AUDIT-1, AUDIT-2, AUDIT-4, AUDIT-6**, recorded during
+Modules 10, 11 and 14 and the §14 post-implementation audit. None blocks the
+module it was found in; each needs a system-owner decision because closing it
+means ruling between frozen clauses, supplying a policy the framework does not
+define, or amending a frozen artifact.
+
+**AUDIT-1, AUDIT-2 and AUDIT-4 share one cause** — the absence of a production
+composition root — and the accepted plan closes all three together. Neither
+AUDIT-1 nor AUDIT-2 is reachable through any committed production path today.
+
+PA-3 was recorded as an Architecture Issue on 2026-08-09 and
 **reclassified to Documentation / Reporting on 2026-08-09** after a final
 evidence review found its behavioural premise unsupported. The system owner
 decided Interpretation B: `core/prompts/06_lead_qualification.md` is **not**
@@ -80,6 +86,13 @@ one class.
 | **RE-5** | **§14 composes no customer-facing fallback text** | **Architecture Issue** |
 | **RE-6** | **A blocked answer is not recorded as an agent turn** | **Documentation / Reporting** |
 | **RE-7** | **§14 publishes no camelCase alias; the convention is unsettled** | **Documentation / Reporting** |
+| **AUDIT-1** | **Budget and provider are never proven to describe the same model** | **Architecture Issue** |
+| **AUDIT-2** | **Cross-project session/workflow contamination via shared stores** | **Architecture Issue** |
+| **AUDIT-3** | **`transition_history` grows with no-op entries** | **Runtime Improvement** |
+| **AUDIT-4** | **No production composition/activation root** | **Architecture Issue** |
+| **AUDIT-5** | **Channel semantics after the first turn** | **Documentation / Reporting** |
+| **AUDIT-6** | **A degraded turn always returns `escalate=False`** | **Architecture Issue** |
+| **AUDIT-7** | **`RuntimeEngine` inspection surface beyond §14.6** | **Documentation / Reporting** |
 | **PA-4** | **§4 cites an assembly order in a section that does not exist** | **Documentation / Reporting** |
 | **PA-5** | **Playbook provenance check inspected only the first source** | **Closed** |
 | **PA-6** | **Runtime provenance cannot prove content origin** | **Documentation / Reporting** |
@@ -128,7 +141,7 @@ measurable threshold that would justify revisiting, and it is not met.
 | ID | Issue | ADR | Future owner |
 |---|---|---|---|
 | V-5 | Framework constants transcribed rather than Core-derived | [ADR 0002](adr/0002-framework-constants-are-transcribed.md) | Core Loader (Task 3) |
-| V-7 | Rules are shared singletons with unenforced statelessness | [ADR 0003](adr/0003-rules-are-shared-singletons.md) | Validation Layer, before Runtime Engine adds concurrency |
+| V-7 | Rules are shared singletons with unenforced statelessness | [ADR 0003](adr/0003-rules-are-shared-singletons.md) | Validation Layer, **before concurrent request handling or parallel validation is introduced** — §14 introduces neither, so its existence does not trigger the deadline |
 
 ---
 
@@ -1163,18 +1176,36 @@ neither is rediscovered as a defect:
 returns *all* Knowledge candidates and the *entire* history window without
 counting anything, under an inline `# Phase 1: all of them.`
 
-That is a budget decision no measurement produced. It is the same defect shape
-as **V-1**, where `NullProviderRegistry` was **deleted** because a default that
-answered without authority made `Validator()` fail open. Here the default
-survives, for a different reason: making the port required means editing Module
-4 and roughly half of its 1,179-line committed test suite, which the
-authorization placed out of scope.
+**Corrected 2026-09-01, after the §14 post-implementation audit.** An earlier
+revision of this entry described the whole default as an unspecified fail-open
+behaviour of the same shape as **V-1**. That overstated it, and the distinction
+matters:
 
-**What §14 does instead:** `RuntimeEngine.__init__` takes `token_budget` as a
-required keyword argument with no default, `PromptAssemblyStage` is the only
-place an assembler is constructed, and a structural test asserts every
-`PromptAssembler(...)` call in `runtime/runtime_engine/` passes `token_budget=`.
-No engine path can reach the unmeasured branch.
+* **Selecting every Knowledge section is specified behaviour.** §5.2 assigns the
+  Token Budget Manager the responsibility to *"select which Knowledge sections
+  to include (**Phase 1: all of them**; later: retrieval-based)"*, and
+  `runtime/assembler/ports.py` cites exactly that clause when defending the
+  default. Returning all Knowledge is the Phase-1 behaviour the specification
+  describes, not an invention.
+* **The genuine concern is narrower**: the default also returns the **entire
+  conversation history unmeasured**, and applies **no fixed-overhead budgeting**
+  at all. Neither is covered by §5.2's Phase-1 sentence, which speaks only to
+  Knowledge. §5.2 additionally requires the module to *"estimate Core + Branding
+  + active Workflow overhead; compute remaining budget"* — and the absent-port
+  path does none of that.
+
+So the defect is the unmeasured history window and the missing overhead
+computation, not the Knowledge selection.
+
+Making the port required means editing Module 4 and roughly half of its
+1,179-line committed test suite, which the authorization placed out of scope.
+
+**What §14 does instead (ruling D-1(b)):** `RuntimeEngine.__init__` takes
+`token_budget` as a required keyword argument with no default,
+`PromptAssemblyStage` is the only place an assembler is constructed, and a
+structural test asserts every `PromptAssembler(...)` call in
+`runtime/runtime_engine/` passes `token_budget=`. **§14 therefore always
+supplies a `TokenBudgetPort` and cannot reach Module 4's unbudgeted branch.**
 
 **What remains open:** any *other* caller still can. The defect is scoped, not
 removed.
@@ -1311,6 +1342,242 @@ and adding an alias here would make §14 the second module of fourteen to differ
 
 **To close it:** rule the convention once — either every module publishes the
 frozen camelCase name, or the Validation Layer's aliases are the anomaly.
+
+---
+
+## Found during the §14 post-implementation audit, 2026-09-01
+
+Seven findings from the architecture gate run against commit `20bf9c6` after
+§14 was committed. **This entry records findings and decisions only. Nothing
+below is fixed, and no AUDIT issue is resolved.**
+
+A note that shapes three of them: **AUDIT-1, AUDIT-2 and AUDIT-4 share one
+cause.** There is no production composition root, so nothing owns the invariants
+such a root would naturally hold — that the budget describes the provider that
+will be called, and that a project's state collaborators are its own. Building
+the root (AUDIT-4) is what makes the other two structurally impossible rather
+than merely documented.
+
+---
+
+### AUDIT-1 — The budget and the provider are never proven to describe the same model
+
+**Severity: High** · **Class: latent architectural hazard / composition
+responsibility** · **Open.**
+
+`RuntimeEngine.__init__` accepts `token_budget` and `providers` as **independent
+arguments** and never cross-checks them. An engine can therefore be constructed
+whose Token Budget Manager is bound to one model while the Provider Registry
+resolves another — reproduced during the audit, with a budget bound to
+`other/other-m` while the registry resolved `fixture_provider/fixture-model-1`.
+
+This re-opens, one level up, the invalid state **T-1** exists to make
+unconstructible. `runtime/provider/binding.py` names it exactly: *"Module 5 would
+count every string precisely, against the wrong vocabulary, and report success…
+a wrong answer that looks exact."* `ModelBinding` forbids the mismatch *inside*
+an adapter; §14 does not carry that guarantee across its own constructor.
+
+**Not reachable through any committed production path.** No production code
+constructs a `RuntimeEngine`; the only assembly is a test helper, which always
+derives the budget from the adapter. The hazard is available to a future caller,
+which is precisely what the composition root will be.
+
+**Blast radius, measured rather than assumed.** The dangerous direction — a
+budget sized against a far larger window than the real provider's — was tested
+and produced a **degraded** turn with **zero calls reaching the provider**: the
+adapter's own C-1a assertion fired, as the conformance suite requires of every
+adapter. What is *not* caught is an over-conservative window (silently drops
+Knowledge that would have fit) or a wrong tokenizer against a similar window
+(silently miscounts). Those degrade quality with no signal.
+
+**Canonical future resolution (accepted, not implemented):** derive the budget
+from the provider selected for the activated project, through its existing
+`ModelBinding`. §5.4 already lists the budget's window as coming *"via Provider
+Interface's capability query"* and §5.7 grants Module 5 that dependency, so this
+is the specified relationship rather than a new one. `ProviderRegistry.register`
+already requires `ModelBoundProvider`, so `get_provider(...).model_binding()`
+yields a tokenizer and capabilities that provably describe one model.
+
+**Explicitly rejected:** adding provider identity to `TokenBudgetPort` — that
+would make Module 4 provider-aware and invert the direction
+`runtime/provider/binding.py` was written to protect. Also rejected: a second
+`ModelBinding`-like abstraction; the existing one suffices.
+
+**Structural owner: the composition/activation root (AUDIT-4).** Until it exists
+and derives the budget itself, this stays open.
+
+---
+
+### AUDIT-2 — Cross-project session and workflow-state contamination
+
+**Severity: High** · **Class: latent architectural hazard** · **Open.**
+
+Two `RuntimeEngine` instances serving different projects, sharing one
+`SessionManager` and one `WorkflowStateManager`, and receiving a colliding
+`conversation_id`, will interleave their conversations. Reproduced during the
+audit:
+
+```
+conversation project_id recorded as: fixture_clinic
+    user  | A asks
+    agent | answer from project A
+    user  | B asks          ← project B's turn, in project A's conversation
+    agent | answer from project B
+```
+
+Project B's next prompt would then contain project A's message and answer, and
+`ConversationContext.project_id` continues to name project A.
+
+**Not reachable through an existing production composition path**, because no
+production composition root exists to share the collaborators. Requires both a
+shared store and an id collision; nothing currently documents that either is
+forbidden.
+
+**Not introduced by §14.** §12.6 and §7.6 are frozen and key *every* method on
+`conversation_id` alone; the managers have always been project-agnostic. §14 is
+simply the first module from which the hazard is reachable.
+
+**Canonical isolation rule (accepted):**
+
+> A `conversation_id` namespace belongs to exactly one project. `SessionManager`
+> and `WorkflowStateManager` are scoped to exactly one activated project.
+
+The future composition root constructs them per project, which makes the
+collision structurally impossible without touching a signature. `RuntimeEngine`
+may additionally enforce project ownership at the `SessionStage` boundary as
+defence in depth — it already knows its own `project_id`, and
+`ConversationContext.project_id` already exists.
+
+**Frozen Module 7 and Module 12 interfaces must not change** to satisfy this.
+Adding `project_id` to their methods would amend §7.6/§12.6; constructor-level
+scoping was considered and set aside in favour of the root, which changes no
+committed module at all.
+
+---
+
+### AUDIT-3 — `transition_history` grows with no-op entries
+
+**Severity: Low** · **Class: Runtime Improvement** · **Owner: Module 6/7** ·
+**Deferred.**
+
+Three turns produce `('None->discovery', 'discovery->discovery',
+'discovery->discovery')`. The Workflow Router returns "stay" on every turn after
+the first, and §14 commits each decision, so per-conversation history grows
+linearly with turn count and is mostly noise.
+
+**§14 must not decide whether no-op transitions should be retained.** Filtering
+them in the engine would mean §14 deciding what counts as a real transition —
+§14.3's *"maintainability red flag"*. Whether `transition_history` is an audit
+log (keep every commit) or a state history (keep changes only) is a question §7
+does not answer, and it belongs with Modules 6 and 7.
+
+---
+
+### AUDIT-4 — No production composition/activation root
+
+**Severity: Medium** · **Class: architecture decision / implementation
+follow-up** · **Open.**
+
+Nothing in `runtime/` assembles an activated engine. The chain
+
+```
+filesystem → CoreLoader / ProjectLoader → Resolver → Validator
+           → ProviderRegistry / adapter → TokenBudgetManager
+           → project-scoped SessionManager + WorkflowStateManager
+           → RuntimeEngine
+```
+
+is performed today only by a test helper. Consequently §14 owns the *session*
+half of §14.2's first step ("resolve project + session") and not the *resolve*
+half, and every edge a composition root would own is currently the caller's.
+
+**Planned solution:** `runtime/runtime_engine/activation.py`, whose
+responsibility is exactly: load → resolve → validate → reject an invalid project
+→ resolve the provider → derive the budget from that provider's `ModelBinding`
+→ construct a project-scoped `SessionManager` → construct a project-scoped
+`WorkflowStateManager` → construct the `RuntimeEngine`.
+
+It must preserve dependency direction, and **must not become a second
+orchestrator for request handling** — §14.1 names one module that calls the
+others in sequence, and `handle_request` remains that path.
+
+**Not implemented by this documentation commit.** It remains a future authorized
+code change, and AUDIT-4 stays open until `activation.py` exists and is verified.
+
+---
+
+### AUDIT-5 — Channel semantics after the first turn
+
+**Severity: Low** · **Class: documentation / semantic clarification** ·
+**Deferred.**
+
+`RuntimeRequest.channel` reaches `create_session` on the conversation's first
+turn and the observability payload on every turn. A later request arriving on a
+different channel does **not** replace the conversation's original channel.
+
+That is the frozen model's behaviour, not a §14 defect: §12's data-model row
+treats `channel` as conversation-level metadata established at creation, and
+§12.6 exposes no method to change it. **No frozen `SessionManager` interface
+should be changed merely for this finding.** Recorded so the semantics are
+explicit rather than discovered.
+
+---
+
+### AUDIT-6 — A degraded turn always returns `escalate=False`
+
+**Severity: Low** · **Class: deferred policy question** · **Owner: Module 8 /
+Guardrail Engine.**
+
+An internal failure contained by §14.9 produces `RuntimeResponse(degraded=True,
+escalate=False)`. Whether a technical failure should summon a human is a policy
+question §14 does not answer.
+
+`core/guardrails/escalation.md` lists *"Technical issues exceed the AI's
+capabilities"* among its Automatic Escalation Conditions — but that condition is
+one of the ten the Guardrail Engine publishes in `UNENFORCED_CORE_CONDITIONS` as
+having no deterministic evaluator. **The Runtime Engine must not invent
+escalation policy for internal failures**: doing so would implement a guardrail
+rule Module 8 declined to implement, against §14.3.
+
+**§15 is not the owner either** — §15.3 makes it a pure recorder that *"must
+never itself decide to block a request based on an observed pattern; that's
+Guardrail Engine's job."* Escalation policy belongs to Module 8.
+
+---
+
+### AUDIT-7 — `RuntimeEngine` inspection surface
+
+**Severity: Very Low** · **Class: API / documentation.**
+
+§14.6 declares one public member; `RuntimeEngine` exposes three:
+`handle_request`, plus the read-only properties `project_id` and `stage_names`.
+
+**Decision: keep both, documented as framework-introduced inspection surface.**
+They are read-only, mutate nothing, and removing them would push tests into
+private attributes — a worse discipline than a documented property. Related to
+**RE-7**, which records that §14 publishes no camelCase alias and that the
+repository-wide naming convention is still unruled.
+
+**Do not remove or rename them** without a separate ruling.
+
+---
+
+### V-7 — reconciliation after the §14 audit
+
+**V-7 remains open and deferred. Its deadline has not arrived.**
+
+An earlier reading held that the Runtime Engine's *existence* triggered ADR
+0003's deadline. That is incorrect. The ADR's wording is specific:
+
+> *"The forcing function is the Runtime Engine (Phase 2, later task), **which
+> introduces concurrent request handling**. Until something validates two
+> projects in parallel, the hazard is latent. It must be closed before that
+> lands, not after."*
+
+**§14 introduces no concurrency** — no async surface, no threads, no executor,
+no locks, verified structurally and recorded as RE-3. The forcing function is
+concurrent request handling or parallel validation, **not** the module existing.
+V-7 must be addressed before either lands; §15 is not the trigger.
 
 ---
 
