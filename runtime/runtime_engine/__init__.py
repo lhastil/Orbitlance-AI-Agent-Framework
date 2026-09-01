@@ -2,6 +2,7 @@
 
 Public surface:
 
+    activate                  the production composition root
     RuntimeEngine             the orchestrator; one activated project each
     RuntimeRequest            §14.4's incoming request
     RuntimeResponse           §14.5's output to the channel adapter
@@ -12,6 +13,13 @@ Public surface:
 The engine is constructed for **one validated, resolved project** and answers
 `handle_request` for that project only. Activation is a construction
 precondition, not a per-message check (§14.2, §14.10).
+
+`activate` is the production path: it loads, resolves and validates a project,
+then constructs the engine with collaborators scoped to that project alone. The
+`RuntimeEngine` constructor remains public and is the seam tests and future
+callers use directly — it enforces the activation gate and derives its own
+budget, but it accepts whatever session and workflow stores it is given, so
+collaborator scoping is a guarantee of `activate`, not of the constructor.
 
 **What this milestone does not do**, each recorded rather than implied:
 
@@ -26,6 +34,7 @@ precondition, not a per-message check (§14.2, §14.10).
 """
 
 from runtime.models.runtime import RuntimeRequest, RuntimeResponse
+from runtime.runtime_engine.activation import activate
 from runtime.runtime_engine.engine import RuntimeEngine
 from runtime.runtime_engine.errors import ProjectNotActivatedError
 from runtime.runtime_engine.ports import NullObservabilitySink, ObservabilitySink
@@ -37,4 +46,5 @@ __all__ = [
     "RuntimeEngine",
     "RuntimeRequest",
     "RuntimeResponse",
+    "activate",
 ]

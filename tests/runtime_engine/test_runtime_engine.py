@@ -26,8 +26,6 @@ import pathlib
 
 import pytest
 
-from runtime.assembler.ports import TokenBudgetPort
-from runtime.budget import TokenBudgetManager
 from runtime.core_loader import CoreLoader, FilesystemCoreSource
 from runtime.guardrail import GuardrailEngine
 from runtime.loader import FilesystemProjectSource, ProjectLoader
@@ -51,12 +49,13 @@ from runtime.provider import (
     SerializedPrompt,
     run_conformance,
 )
-from runtime.provider_registry import ProviderRegistry
+from runtime.provider_registry import ProviderNotRegisteredError, ProviderRegistry
 from runtime.resolver import Resolver
 from runtime.runtime_engine import (
     NullObservabilitySink,
     ProjectNotActivatedError,
     RuntimeEngine,
+    activate,
 )
 from runtime.session import SessionManager
 from runtime.tool_executor import ToolExecutor
@@ -197,21 +196,15 @@ def build_engine(
     adapter: FixtureAdapter | None = None,
     observability=None,
     tools: ToolExecutor | None = None,
-    token_budget: TokenBudgetPort | None = None,
 ) -> tuple[RuntimeEngine, FixtureAdapter, ProviderRegistry]:
     adapter = adapter if adapter is not None else FixtureAdapter()
     registry = ProviderRegistry().register(adapter)
-    budget = token_budget or TokenBudgetManager(
-        tokenizer=adapter.model_binding().tokenizer,
-        capabilities=AdapterCapabilities(adapter),
-    )
     engine = RuntimeEngine(
         resolved_context=context,
         validation=validation_for(core, registry),
         core=core,
         sessions=SessionManager(),
         guardrails=GuardrailEngine(core),
-        token_budget=budget,
         providers=registry,
         router=WorkflowRouter(),
         states=WorkflowStateManager(),
@@ -321,10 +314,6 @@ def test_2_an_invalid_project_cannot_construct_an_engine(core: CoreBundle) -> No
             core=core,
             sessions=SessionManager(),
             guardrails=GuardrailEngine(core),
-            token_budget=TokenBudgetManager(
-                tokenizer=FixtureTokenizer(FIXTURE_IDENTITY),
-                capabilities=AdapterCapabilities(FixtureAdapter()),
-            ),
             providers=ProviderRegistry(),
             router=WorkflowRouter(),
             states=WorkflowStateManager(),
@@ -345,10 +334,6 @@ def test_2_a_validation_result_for_another_project_is_refused(
             core=core,
             sessions=SessionManager(),
             guardrails=GuardrailEngine(core),
-            token_budget=TokenBudgetManager(
-                tokenizer=FixtureTokenizer(FIXTURE_IDENTITY),
-                capabilities=AdapterCapabilities(FixtureAdapter()),
-            ),
             providers=ProviderRegistry(),
             router=WorkflowRouter(),
             states=WorkflowStateManager(),
@@ -368,10 +353,6 @@ def test_2_a_core_validation_result_is_refused(
             core=core,
             sessions=SessionManager(),
             guardrails=GuardrailEngine(core),
-            token_budget=TokenBudgetManager(
-                tokenizer=FixtureTokenizer(FIXTURE_IDENTITY),
-                capabilities=AdapterCapabilities(FixtureAdapter()),
-            ),
             providers=ProviderRegistry(),
             router=WorkflowRouter(),
             states=WorkflowStateManager(),
@@ -431,10 +412,6 @@ def test_4_the_user_turn_survives_a_provider_failure(
         core=core,
         sessions=sessions,
         guardrails=GuardrailEngine(core),
-        token_budget=TokenBudgetManager(
-            tokenizer=adapter.model_binding().tokenizer,
-            capabilities=AdapterCapabilities(adapter),
-        ),
         providers=registry,
         router=WorkflowRouter(),
         states=WorkflowStateManager(),
@@ -457,10 +434,6 @@ def test_4_both_turns_are_recorded_on_a_successful_turn(
         core=core,
         sessions=sessions,
         guardrails=GuardrailEngine(core),
-        token_budget=TokenBudgetManager(
-            tokenizer=adapter.model_binding().tokenizer,
-            capabilities=AdapterCapabilities(adapter),
-        ),
         providers=registry,
         router=WorkflowRouter(),
         states=WorkflowStateManager(),
@@ -494,10 +467,6 @@ def test_5_the_pre_flight_guardrail_runs_on_every_turn(
         core=core,
         sessions=SessionManager(),
         guardrails=Watching(core),
-        token_budget=TokenBudgetManager(
-            tokenizer=adapter.model_binding().tokenizer,
-            capabilities=AdapterCapabilities(adapter),
-        ),
         providers=registry,
         router=WorkflowRouter(),
         states=WorkflowStateManager(),
@@ -524,10 +493,6 @@ def test_5_a_pre_flight_block_short_circuits_before_the_provider(
         core=core,
         sessions=SessionManager(),
         guardrails=GuardrailEngine(empty_core),
-        token_budget=TokenBudgetManager(
-            tokenizer=adapter.model_binding().tokenizer,
-            capabilities=AdapterCapabilities(adapter),
-        ),
         providers=registry,
         router=WorkflowRouter(),
         states=WorkflowStateManager(),
@@ -562,14 +527,74 @@ def test_5_the_pipeline_cannot_be_supplied_as_a_list() -> None:
 
 
 # =============================================================================
-# 6-7. the budget is mandatory and actually exercised
+# 6-7. the budget is derived from the provider, and cannot be injected
 # =============================================================================
-def test_6_the_engine_cannot_be_constructed_without_a_budget() -> None:
-    """Ruling D-1(b): Module 4's unbudgeted default stays, §14 never reaches it."""
+def test_6_no_budget_can_be_injected_through_the_constructor() -> None:
+    """AUDIT-1: the absence of the parameter *is* the invariant.
+
+    While `token_budget` existed, a caller could hand the engine a budget bound
+    to a different model — the invalid state T-1 makes unconstructible inside an
+    adapter, re-opened one level up. It is closed by removing the argument, not
+    by checking it.
+    """
     import inspect
 
-    parameter = inspect.signature(RuntimeEngine.__init__).parameters["token_budget"]
-    assert parameter.default is inspect.Parameter.empty
+    params = set(inspect.signature(RuntimeEngine.__init__).parameters)
+    assert "token_budget" not in params
+    for forbidden in ("tokenizer", "capabilities", "budget"):
+        assert forbidden not in params
+
+
+def test_6_the_budget_is_derived_from_the_resolved_providers_binding(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """The tokenizer that counts belongs to the model that will be called.
+
+    Proven by identity: the adapter's own tokenizer object is the one the budget
+    consults, so there is no second vocabulary anywhere in the path.
+    """
+    adapter = FixtureAdapter()
+    counted: list[str] = []
+    tokenizer = adapter.model_binding().tokenizer
+    original = tokenizer.count_tokens
+
+    def recording(text: str) -> int:
+        counted.append(text)
+        return original(text)
+
+    tokenizer.count_tokens = recording  # type: ignore[method-assign]
+    engine, _, _ = build_engine(core, fixture_context, adapter=adapter)
+    engine.handle_request(request())
+    assert counted, "the bound tokenizer must be the one the budget counts with"
+
+
+def test_6_a_mismatched_budget_can_no_longer_be_constructed(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """The AUDIT-1 reproduction, inverted.
+
+    Before the fix, an engine could be built whose budget described
+    `other/other-m` while the registry resolved `fixture_provider/...`. There is
+    now no argument through which the wrong binding could enter, so the only
+    provider the engine can budget against is the one it resolves.
+    """
+    wrong = FixtureAdapter(identity=ModelIdentity("other", "other-m"))
+    registry = ProviderRegistry().register(FixtureAdapter())
+    engine = RuntimeEngine(
+        resolved_context=fixture_context,
+        validation=validation_for(core, registry),
+        core=core,
+        sessions=SessionManager(),
+        guardrails=GuardrailEngine(core),
+        providers=registry,
+        router=WorkflowRouter(),
+        states=WorkflowStateManager(),
+        tools=ToolExecutor(),
+    )
+    resolved = registry.get_provider(fixture_context)
+    assert resolved.model_binding().identity == FIXTURE_IDENTITY
+    assert resolved.model_binding().identity != wrong.model_binding().identity
+    assert engine.handle_request(request()).text == ANSWER
 
 
 def test_6_no_engine_code_path_builds_an_unbudgeted_assembler() -> None:
@@ -586,20 +611,19 @@ def test_6_no_engine_code_path_builds_an_unbudgeted_assembler() -> None:
 def test_7_the_budget_is_actually_consulted(
     core: CoreBundle, fixture_context: ResolvedContext
 ) -> None:
-    seen: list[str] = []
-    real = TokenBudgetManager(
-        tokenizer=FixtureTokenizer(FIXTURE_IDENTITY),
-        capabilities=AdapterCapabilities(FixtureAdapter()),
-    )
+    """A real `TokenBudgetManager` runs on every turn.
 
-    class Recording:
-        def select(self, budget_request):
-            seen.append(budget_request.project_id)
-            return real.select(budget_request)
-
-    engine, _, _ = build_engine(core, fixture_context, token_budget=Recording())
-    engine.handle_request(request())
-    assert seen == [FIXTURE_ID]
+    Observed through the assembler seam rather than through an injected port,
+    because the injection point is gone: the bundle that reaches the provider
+    carries a history window the budget selected, and Module 4 delegates that
+    selection entirely.
+    """
+    engine, adapter, _ = build_engine(core, fixture_context)
+    engine.handle_request(request("first"))
+    engine.handle_request(request("second"))
+    second = adapter.calls[1]
+    assert second.conversation_history_window, "the budget selected a history window"
+    assert second.static_sections, "the budget admitted the fixed sections"
 
 
 def test_7_a_tight_window_changes_what_ships(
@@ -633,28 +657,48 @@ def test_8_the_provider_is_selected_for_the_activated_project(
     assert adapter.model_binding().identity == FIXTURE_IDENTITY
 
 
-def test_8_a_provider_the_project_does_not_declare_is_refused(
+def test_8_a_provider_the_project_does_not_declare_fails_at_construction(
     core: CoreBundle, fixture_context: ResolvedContext
 ) -> None:
+    """Deriving the budget moved this failure to activation — which §10.10 wants.
+
+    Before, an unresolvable provider surfaced as a degraded turn on a customer's
+    first message. It is now a construction failure, *"caught as a configuration
+    error at Validation Layer time, not mid-conversation."*
+    """
     other = FixtureAdapter(identity=ModelIdentity("other_provider", "other-model"))
     registry = ProviderRegistry().register(other)
-    engine = RuntimeEngine(
-        resolved_context=fixture_context,
-        validation=ValidationResult.build(ValidationTarget.PROJECT, FIXTURE_ID, ()),
-        core=core,
-        sessions=SessionManager(),
-        guardrails=GuardrailEngine(core),
-        token_budget=TokenBudgetManager(
-            tokenizer=other.model_binding().tokenizer,
-            capabilities=AdapterCapabilities(other),
-        ),
-        providers=registry,
-        router=WorkflowRouter(),
-        states=WorkflowStateManager(),
-        tools=ToolExecutor(),
-    )
-    response = engine.handle_request(request())
-    assert response.degraded, "an unresolvable provider is contained, not raised"
+    with pytest.raises(ProviderNotRegisteredError):
+        RuntimeEngine(
+            resolved_context=fixture_context,
+            validation=ValidationResult.build(ValidationTarget.PROJECT, FIXTURE_ID, ()),
+            core=core,
+            sessions=SessionManager(),
+            guardrails=GuardrailEngine(core),
+            providers=registry,
+            router=WorkflowRouter(),
+            states=WorkflowStateManager(),
+            tools=ToolExecutor(),
+        )
+
+
+def test_8_the_activation_gate_still_precedes_provider_resolution(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """Ordering matters: an unvalidated project is unactivated, not misconfigured."""
+    foreign = ValidationResult.build(ValidationTarget.PROJECT, "someone_else", ())
+    with pytest.raises(ProjectNotActivatedError):
+        RuntimeEngine(
+            resolved_context=fixture_context,
+            validation=foreign,
+            core=core,
+            sessions=SessionManager(),
+            guardrails=GuardrailEngine(core),
+            providers=ProviderRegistry(),  # empty: would also fail provider lookup
+            router=WorkflowRouter(),
+            states=WorkflowStateManager(),
+            tools=ToolExecutor(),
+        )
 
 
 def test_9_the_provider_response_reaches_the_post_response_guardrail(
@@ -675,10 +719,6 @@ def test_9_the_provider_response_reaches_the_post_response_guardrail(
         core=core,
         sessions=SessionManager(),
         guardrails=Watching(core),
-        token_budget=TokenBudgetManager(
-            tokenizer=adapter.model_binding().tokenizer,
-            capabilities=AdapterCapabilities(adapter),
-        ),
         providers=registry,
         router=WorkflowRouter(),
         states=WorkflowStateManager(),
@@ -734,10 +774,6 @@ def test_11_an_escalating_guardrail_sets_escalate(
         core=core,
         sessions=SessionManager(),
         guardrails=GuardrailEngine(CoreBundle()),
-        token_budget=TokenBudgetManager(
-            tokenizer=adapter.model_binding().tokenizer,
-            capabilities=AdapterCapabilities(adapter),
-        ),
         providers=registry,
         router=WorkflowRouter(),
         states=WorkflowStateManager(),
@@ -868,10 +904,6 @@ def test_15_the_first_turn_commits_the_discovery_transition(
         core=core,
         sessions=SessionManager(),
         guardrails=GuardrailEngine(core),
-        token_budget=TokenBudgetManager(
-            tokenizer=adapter.model_binding().tokenizer,
-            capabilities=AdapterCapabilities(adapter),
-        ),
         providers=registry,
         router=WorkflowRouter(),
         states=states,
@@ -894,10 +926,6 @@ def test_15_a_blocked_turn_commits_no_transition(
         core=core,
         sessions=SessionManager(),
         guardrails=GuardrailEngine(CoreBundle()),
-        token_budget=TokenBudgetManager(
-            tokenizer=adapter.model_binding().tokenizer,
-            capabilities=AdapterCapabilities(adapter),
-        ),
         providers=registry,
         router=WorkflowRouter(),
         states=states,
@@ -988,19 +1016,42 @@ def test_18_no_concurrency_machinery_exists() -> None:
 
 
 def test_19_no_credentials_environment_or_network() -> None:
+    """No credential, environment or network access anywhere in the package.
+
+    `pathlib` is exempt in `activation.py` **only**, and only as a type: the
+    composition root's job is to *name* a projects root and hand it to
+    `FilesystemProjectSource`, which is the module the architecture grants
+    filesystem access. It opens nothing itself —
+    `test_activation_is_not_a_second_orchestrator` and
+    `test_activation_makes_no_provider_call` pin that separately. Everything
+    else in the package, engine and stages included, stays forbidden.
+    """
     forbidden = {
         "os", "socket", "requests", "httpx", "urllib", "smtplib", "http", "ssl",
         "subprocess", "pathlib",
     }
     for path, tree in trees():
+        allowed_here = {"pathlib"} if path.name == "activation.py" else set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert alias.name.split(".")[0] not in forbidden, path.name
+                    root = alias.name.split(".")[0]
+                    assert root not in forbidden - allowed_here, path.name
             if isinstance(node, ast.ImportFrom):
-                assert (node.module or "").split(".")[0] not in forbidden, path.name
+                root = (node.module or "").split(".")[0]
+                assert root not in forbidden - allowed_here, path.name
             if isinstance(node, ast.Name):
                 assert node.id not in {"os", "environ", "getenv"}, path.name
+
+
+def test_19_only_the_composition_root_names_a_filesystem_path() -> None:
+    """The engine and its stages never see a path at all."""
+    for path, tree in trees():
+        if path.name == "activation.py":
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                assert node.id not in {"Path", "open"}, path.name
 
 
 def test_19_no_vendor_name_appears() -> None:
@@ -1075,6 +1126,205 @@ def test_nothing_in_the_runtime_imports_the_engine() -> None:
                 assert not (node.module or "").startswith("runtime.runtime_engine"), (
                     f"{path} imports the Runtime Engine"
                 )
+
+
+# =============================================================================
+# the composition root (AUDIT-4), and the invariants it owns (AUDIT-1, AUDIT-2)
+# =============================================================================
+def activated(core: CoreBundle, adapter: FixtureAdapter | None = None):
+    """Activate the fixture through the production path."""
+    adapter = adapter if adapter is not None else FixtureAdapter()
+    registry = ProviderRegistry().register(adapter)
+    return activate(core, FIXTURES, FIXTURE_ID, registry), adapter
+
+
+def collaborators(engine: RuntimeEngine) -> tuple[object, object]:
+    """The session and workflow stores an engine's stages actually hold."""
+    stages = {stage.name: stage for stage in engine._pipeline}  # noqa: SLF001
+    return (
+        stages["session"]._sessions,  # noqa: SLF001
+        stages["workflow_state"]._states,  # noqa: SLF001
+    )
+
+
+def test_activation_returns_a_working_engine_for_the_real_fixture(
+    core: CoreBundle,
+) -> None:
+    """A. The production path produces an engine that serves a real turn."""
+    engine, adapter = activated(core)
+    assert isinstance(engine, RuntimeEngine)
+    assert engine.project_id == FIXTURE_ID
+    response = engine.handle_request(request())
+    assert response.text == ANSWER
+    assert len(adapter.calls) == 1
+
+
+def test_activation_runs_the_real_load_resolve_validate_chain(
+    core: CoreBundle,
+) -> None:
+    """B. No fabricated ValidationResult — the real Validator gates activation."""
+    tree = ast.parse((PACKAGE / "activation.py").read_text(encoding="utf-8"))
+    called = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    for required in ("ProjectLoader", "Resolver", "Validator", "RuntimeEngine"):
+        assert required in called, f"activation does not use {required}"
+    # And behaviourally: the engine it returns holds a passing project result.
+    engine, _ = activated(core)
+    assert engine._validation.valid  # noqa: SLF001
+    assert engine._validation.subject_id == FIXTURE_ID  # noqa: SLF001
+
+
+def test_an_invalid_project_cannot_be_activated(core: CoreBundle) -> None:
+    """C. `sunrise_dental_clinic` fails the real Validation Layer today."""
+    registry = ProviderRegistry().register(FixtureAdapter())
+    with pytest.raises(ProjectNotActivatedError, match="has not passed validation"):
+        activate(core, REPO_ROOT / "projects", "sunrise_dental_clinic", registry)
+
+
+def test_activation_accepts_no_budget_session_or_workflow_argument() -> None:
+    """D + E. The root cannot be handed the state AUDIT-1 and AUDIT-2 concern."""
+    import inspect
+
+    params = list(inspect.signature(activate).parameters)
+    assert params == ["core", "projects_root", "project_id", "providers"]
+    for forbidden in ("token_budget", "sessions", "states", "budget"):
+        assert forbidden not in params
+
+
+def test_each_activation_constructs_fresh_collaborators(core: CoreBundle) -> None:
+    """E + G. Two activations share no session or workflow store."""
+    first, _ = activated(core)
+    second, _ = activated(core)
+    first_sessions, first_states = collaborators(first)
+    second_sessions, second_states = collaborators(second)
+    assert first_sessions is not second_sessions
+    assert first_states is not second_states
+    assert isinstance(first_sessions, SessionManager)
+    assert isinstance(first_states, WorkflowStateManager)
+
+
+def test_colliding_conversation_ids_stay_isolated_across_activations(
+    core: CoreBundle,
+) -> None:
+    """F. The AUDIT-2 reproduction, run through the production path.
+
+    Two activations, the *same* conversation id, different answers. Before the
+    composition root existed, sharing the stores let one activation's turns
+    appear in the other's conversation. Here each activation owns its own.
+
+    Only one project in this repository is activatable — both production
+    projects fail validation — so this exercises two activations rather than two
+    project names. The mechanism under test is per-activation collaborator
+    scoping, which is what the isolation actually rests on.
+    """
+    first, _ = activated(core, FixtureAdapter(text="answer from the first"))
+    second, _ = activated(core, FixtureAdapter(text="answer from the second"))
+
+    first.handle_request(request("asked of the first", conversation_id="shared-id"))
+    second.handle_request(request("asked of the second", conversation_id="shared-id"))
+
+    first_sessions, _ = collaborators(first)
+    second_sessions, _ = collaborators(second)
+    first_turns = [t.content for t in first_sessions.get_context("shared-id").turns]
+    second_turns = [t.content for t in second_sessions.get_context("shared-id").turns]
+
+    assert first_turns == ["asked of the first", "answer from the first"]
+    assert second_turns == ["asked of the second", "answer from the second"]
+    for leaked in ("asked of the second", "answer from the second"):
+        assert leaked not in first_turns
+
+
+def test_the_provider_bound_budget_invariant_survives_activation(
+    core: CoreBundle,
+) -> None:
+    """D. The budget the activated engine uses is the resolved adapter's."""
+    adapter = FixtureAdapter()
+    counted: list[str] = []
+    tokenizer = adapter.model_binding().tokenizer
+    original = tokenizer.count_tokens
+
+    def recording(text: str) -> int:
+        counted.append(text)
+        return original(text)
+
+    tokenizer.count_tokens = recording  # type: ignore[method-assign]
+    engine, _ = activated(core, adapter)
+    engine.handle_request(request())
+    assert counted, "activation must budget with the resolved provider's tokenizer"
+
+
+def test_activation_makes_no_provider_call(core: CoreBundle) -> None:
+    """7. Capability inspection only — no generate, no network."""
+    adapter = FixtureAdapter()
+    registry = ProviderRegistry().register(adapter)
+    activate(core, FIXTURES, FIXTURE_ID, registry)
+    assert adapter.calls == [], "activation must not call the provider"
+
+    tree = ast.parse((PACKAGE / "activation.py").read_text(encoding="utf-8"))
+    forbidden = {"os", "socket", "requests", "httpx", "urllib", "http", "ssl"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert alias.name.split(".")[0] not in forbidden
+        if isinstance(node, ast.ImportFrom):
+            assert (node.module or "").split(".")[0] not in forbidden
+
+
+def test_activation_holds_no_module_level_state() -> None:
+    """I. No cached engines, no shared managers, no registry singleton."""
+    tree = ast.parse((PACKAGE / "activation.py").read_text(encoding="utf-8"))
+    for node in tree.body:
+        assert not isinstance(node, ast.Assign | ast.AnnAssign), (
+            "activation.py declares module-level state"
+        )
+        if isinstance(node, ast.ClassDef):
+            raise AssertionError("activation.py must be a function, not a hierarchy")
+
+
+def test_activation_is_not_a_second_orchestrator() -> None:
+    """J. Construction only — it never runs a turn or a pipeline stage."""
+    tree = ast.parse((PACKAGE / "activation.py").read_text(encoding="utf-8"))
+    forbidden_calls = {
+        "handle_request", "build_pipeline", "generate", "generate_with_fallback",
+        "check_pre_flight", "check_post_response", "assemble", "execute",
+        "append_turn", "commit_transition", "route", "record",
+    }
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+            assert name not in forbidden_calls, f"activation.py calls {name}"
+
+
+def test_nothing_in_the_runtime_imports_activation() -> None:
+    """H. The composition root has no inbound runtime dependency."""
+    for path in (REPO_ROOT / "runtime").rglob("*.py"):
+        if path.parent == PACKAGE:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                assert node.module != "runtime.runtime_engine.activation", path
+
+
+def test_the_engine_package_depends_only_downward() -> None:
+    """H. No peer-to-peer upward edge was introduced by the composition root."""
+    allowed = {
+        "runtime.models", "runtime.assembler", "runtime.budget", "runtime.guardrail",
+        "runtime.loader", "runtime.provider_registry", "runtime.resolver",
+        "runtime.session", "runtime.tool_executor", "runtime.validation",
+        "runtime.workflow_router", "runtime.workflow_state", "runtime.runtime_engine",
+    }
+    for path in PACKAGE.glob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
+                "runtime"
+            ):
+                package = ".".join(node.module.split(".")[:2])
+                assert package in allowed, f"{path.name} imports {node.module}"
 
 
 @pytest.mark.parametrize(

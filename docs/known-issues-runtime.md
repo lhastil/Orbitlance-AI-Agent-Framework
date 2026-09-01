@@ -12,16 +12,19 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Fourteen open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
-RE-3, RE-4, RE-5, and AUDIT-1, AUDIT-2, AUDIT-4, AUDIT-6**, recorded during
-Modules 10, 11 and 14 and the §14 post-implementation audit. None blocks the
-module it was found in; each needs a system-owner decision because closing it
-means ruling between frozen clauses, supplying a policy the framework does not
-define, or amending a frozen artifact.
+**Eleven open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
+RE-3, RE-4, RE-5, AUDIT-6**, recorded during Modules 10, 11 and 14 and the §14
+post-implementation audit. None blocks the module it was found in; each needs a
+system-owner decision because closing it means ruling between frozen clauses,
+supplying a policy the framework does not define, or amending a frozen artifact.
 
-**AUDIT-1, AUDIT-2 and AUDIT-4 share one cause** — the absence of a production
-composition root — and the accepted plan closes all three together. Neither
-AUDIT-1 nor AUDIT-2 is reachable through any committed production path today.
+**AUDIT-1, AUDIT-2 and AUDIT-4 shared one cause** — the absence of a production
+composition root — and were **closed together on 2026-09-01** by
+`runtime/runtime_engine/activation.py` plus the removal of `token_budget` from
+`RuntimeEngine.__init__`. AUDIT-1 is closed *globally*; **AUDIT-2 is closed for
+the production activation path only**, because the low-level constructor still
+accepts externally supplied session and workflow stores. That distinction is
+preserved deliberately in AUDIT-2's entry and must not be collapsed.
 
 PA-3 was recorded as an Architecture Issue on 2026-08-09 and
 **reclassified to Documentation / Reporting on 2026-08-09** after a final
@@ -86,10 +89,10 @@ one class.
 | **RE-5** | **§14 composes no customer-facing fallback text** | **Architecture Issue** |
 | **RE-6** | **A blocked answer is not recorded as an agent turn** | **Documentation / Reporting** |
 | **RE-7** | **§14 publishes no camelCase alias; the convention is unsettled** | **Documentation / Reporting** |
-| **AUDIT-1** | **Budget and provider are never proven to describe the same model** | **Architecture Issue** |
-| **AUDIT-2** | **Cross-project session/workflow contamination via shared stores** | **Architecture Issue** |
+| **AUDIT-1** | **Budget and provider are never proven to describe the same model** | **Closed** — resolved globally |
+| **AUDIT-2** | **Cross-project session/workflow contamination via shared stores** | **Closed for the production activation path** (constructor escape hatch remains) |
 | **AUDIT-3** | **`transition_history` grows with no-op entries** | **Runtime Improvement** |
-| **AUDIT-4** | **No production composition/activation root** | **Architecture Issue** |
+| **AUDIT-4** | **No production composition/activation root** | **Closed** — `activation.py` |
 | **AUDIT-5** | **Channel semantics after the first turn** | **Documentation / Reporting** |
 | **AUDIT-6** | **A degraded turn always returns `escalate=False`** | **Architecture Issue** |
 | **AUDIT-7** | **`RuntimeEngine` inspection surface beyond §14.6** | **Documentation / Reporting** |
@@ -1363,7 +1366,9 @@ than merely documented.
 ### AUDIT-1 — The budget and the provider are never proven to describe the same model
 
 **Severity: High** · **Class: latent architectural hazard / composition
-responsibility** · **Open.**
+responsibility** · ✅ **RESOLVED 2026-09-01** — globally, not only on the
+production path. See the resolution at the end of this entry; the analysis is
+retained because it is why the fix took the shape it did.
 
 `RuntimeEngine.__init__` accepts `token_budget` and `providers` as **independent
 arguments** and never cross-checks them. An engine can therefore be constructed
@@ -1403,14 +1408,57 @@ would make Module 4 provider-aware and invert the direction
 `runtime/provider/binding.py` was written to protect. Also rejected: a second
 `ModelBinding`-like abstraction; the existing one suffices.
 
-**Structural owner: the composition/activation root (AUDIT-4).** Until it exists
-and derives the budget itself, this stays open.
+**Resolution — `token_budget` was removed from `RuntimeEngine.__init__`.**
+
+The engine now derives the budget itself, after the activation gate:
+
+```python
+binding = providers.get_provider(resolved_context).model_binding()
+token_budget = TokenBudgetManager(
+    tokenizer=binding.tokenizer,
+    capabilities=_BoundCapabilities(binding.capabilities),
+)
+```
+
+**The absence of the parameter is the invariant.** There is no argument through
+which any caller — the composition root, a test, or future code — can supply a
+budget for a different model. That makes the resolution **globally impossible**
+rather than a guarantee of the production path only, which is why it was done in
+the constructor instead of in `activate`.
+
+`_BoundCapabilities` is a private six-line adapter inside `engine.py`, present
+only because `ModelBinding` holds `capabilities` as an attribute while
+`ProviderCapabilityPort` requires a method. **No frozen interface, no Module 4
+contract and no Module 5 contract was modified.** Identity was not added to
+`TokenBudgetPort`; no second binding type was created; T-1 is extended, not
+bypassed.
+
+Two consequences worth recording:
+
+* **Provider misconfiguration now fails at construction**, not on a customer's
+  first message — which is what §10.10 asks for. `test_8_a_provider_the_project_
+  does_not_declare_fails_at_construction` pins it.
+* **The activation gate still runs first**, so an unvalidated project is refused
+  as unactivated rather than as a provider problem
+  (`test_8_the_activation_gate_still_precedes_provider_resolution`).
+
+Provider resolution during construction is a registry lookup plus the declared-
+model assertion — both offline. `test_activation_makes_no_provider_call` proves
+no provider call occurs.
+
+Proven by `test_6_no_budget_can_be_injected_through_the_constructor`,
+`test_6_the_budget_is_derived_from_the_resolved_providers_binding`,
+`test_6_a_mismatched_budget_can_no_longer_be_constructed` and
+`test_the_provider_bound_budget_invariant_survives_activation`.
 
 ---
 
 ### AUDIT-2 — Cross-project session and workflow-state contamination
 
-**Severity: High** · **Class: latent architectural hazard** · **Open.**
+**Severity: High** · **Class: latent architectural hazard** · ✅ **RESOLVED
+2026-09-01 for the production activation path.** **Not globally impossible** —
+the distinction is stated in the resolution at the end of this entry and must
+not be collapsed.
 
 Two `RuntimeEngine` instances serving different projects, sharing one
 `SessionManager` and one `WorkflowStateManager`, and receiving a colliding
@@ -1453,6 +1501,47 @@ Adding `project_id` to their methods would amend §7.6/§12.6; constructor-level
 scoping was considered and set aside in favour of the root, which changes no
 committed module at all.
 
+**Resolution — `runtime/runtime_engine/activation.py` constructs them per
+activation.**
+
+`activate(core, projects_root, project_id, providers)` builds a fresh
+`SessionManager` and a fresh `WorkflowStateManager` for every activation, and
+**neither is a parameter**. There is no way to hand the same store to two
+projects through the production path. Neither frozen signature changed; the
+managers remain project-agnostic and the *scoping* carries the guarantee.
+
+**The limit of this resolution, stated precisely.** `RuntimeEngine.__init__`
+remains public and still accepts `sessions` and `states`. A caller who bypasses
+`activate` can still share stores across two engines and reproduce the original
+interleaving. So:
+
+| | |
+|---|---|
+| **Production activation path** | contamination is **structurally impossible** |
+| **Low-level `RuntimeEngine` constructor** | escape hatch **remains open** |
+
+That escape hatch is deliberate — the constructor is the seam tests and future
+callers use directly, and closing it would mean either hiding the constructor or
+making the managers project-aware, which §12.6/§7.6 forbid. **This entry does
+not claim global impossibility.**
+
+The approved defence-in-depth measure — `SessionStage` verifying
+`ConversationContext.project_id` against the activated project — was **not
+implemented**, because the composition root alone satisfies the canonical rule
+and `stages.py` was outside the authorized scope. It remains available if the
+escape hatch is later judged unacceptable.
+
+Proven by `test_each_activation_constructs_fresh_collaborators`,
+`test_colliding_conversation_ids_stay_isolated_across_activations` and
+`test_activation_accepts_no_budget_session_or_workflow_argument`.
+
+**Test-coverage limitation, recorded honestly:** only one project in this
+repository is activatable — both production projects fail validation — so the
+isolation test exercises **two activations of one project** rather than two
+project names. The mechanism under test is per-activation collaborator scoping,
+which is what the isolation actually rests on; a second valid fixture would
+have required creating files outside the authorized scope.
+
 ---
 
 ### AUDIT-3 — `transition_history` grows with no-op entries
@@ -1476,7 +1565,8 @@ does not answer, and it belongs with Modules 6 and 7.
 ### AUDIT-4 — No production composition/activation root
 
 **Severity: Medium** · **Class: architecture decision / implementation
-follow-up** · **Open.**
+follow-up** · ✅ **RESOLVED 2026-09-01** — `runtime/runtime_engine/activation.py`
+exists, is tested, and is the documented production activation path.
 
 Nothing in `runtime/` assembles an activated engine. The chain
 
@@ -1501,8 +1591,42 @@ It must preserve dependency direction, and **must not become a second
 orchestrator for request handling** — §14.1 names one module that calls the
 others in sequence, and `handle_request` remains that path.
 
-**Not implemented by this documentation commit.** It remains a future authorized
-code change, and AUDIT-4 stays open until `activation.py` exists and is verified.
+**Resolution — the root is one function, and owns construction only.**
+
+```python
+activate(core, projects_root, project_id, providers) -> RuntimeEngine
+```
+
+It loads the project, resolves it, validates it with the real Validation Layer,
+and constructs the engine with project-scoped collaborators. `core` arrives
+already loaded because the frozen `CoreBundle` row says it is *"created once at
+process startup"* — loading it per project would re-read `core/` once per
+project.
+
+No `ActivationManager`, no factory class, no container, no engine cache, no
+module-level state — `test_activation_holds_no_module_level_state` forbids all of
+it structurally. It is **not** a second orchestrator:
+`test_activation_is_not_a_second_orchestrator` asserts it never calls
+`handle_request`, `build_pipeline`, `generate`, a guardrail, the assembler, the
+tool executor, a session or workflow write, or the observability sink.
+
+The invalid case is refused by `RuntimeEngine`'s own activation gate rather than
+by a second check here — §14.10 has one owner, and two implementations of one
+precondition is how they drift apart.
+
+**Dependency direction after the change:** `runtime_engine` now imports twelve
+packages (`assembler, budget, guardrail, loader, models, provider_registry,
+resolver, session, tool_executor, validation, workflow_router, workflow_state`)
+and has **zero inbound** runtime edges — closer to §14.7's *"every other
+module"* than before, with the root property intact.
+`test_nothing_in_the_runtime_imports_activation` and
+`test_the_engine_package_depends_only_downward` pin both halves.
+
+**Known limitation:** `activate` takes exactly its four contracted arguments, so
+the engine it returns holds an empty `ToolExecutor` and the null observability
+sink. Both are correct today — nothing produces a `ToolRequest` (TE-1) and §15
+does not exist (RE-4) — but when either changes, this signature is where the
+wiring goes.
 
 ---
 

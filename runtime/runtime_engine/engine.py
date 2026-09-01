@@ -101,9 +101,10 @@ audit gap is itself a Compliance risk, is currently unmet by the null default
 
 from __future__ import annotations
 
-from runtime.assembler.ports import TokenBudgetPort
+from runtime.budget import TokenBudgetManager
 from runtime.guardrail import GuardrailEngine
 from runtime.models.core_bundle import CoreBundle
+from runtime.models.provider import ProviderCapabilities
 from runtime.models.resolved_context import ResolvedContext
 from runtime.models.runtime import RuntimeRequest, RuntimeResponse
 from runtime.models.validation import ValidationResult, ValidationTarget
@@ -123,6 +124,28 @@ EVENT_TURN_DEGRADED = "runtime.turn_degraded"
 EVENT_REQUEST_REJECTED = "runtime.request_rejected"
 
 
+class _BoundCapabilities:
+    """Presents a `ModelBinding`'s capabilities on Module 5's port.
+
+    `ModelBinding` holds `capabilities` as an attribute; `ProviderCapabilityPort`
+    requires a `capabilities()` method. This bridges the two and does nothing
+    else — it stores no state of its own, derives nothing, and cannot be
+    constructed from anything but a binding's own capabilities.
+
+    Private, and deliberately so. Neither Module 4's nor Module 5's contract is
+    touched to make the pairing work; the adaptation lives entirely on the
+    Runtime Engine's side of the seam.
+    """
+
+    __slots__ = ("_capabilities",)
+
+    def __init__(self, capabilities: ProviderCapabilities) -> None:
+        self._capabilities = capabilities
+
+    def capabilities(self) -> ProviderCapabilities:
+        return self._capabilities
+
+
 class RuntimeEngine:
     """§14.6's single member, over an activated project."""
 
@@ -136,7 +159,6 @@ class RuntimeEngine:
         core: CoreBundle,
         sessions: SessionManager,
         guardrails: GuardrailEngine,
-        token_budget: TokenBudgetPort,
         providers: ProviderRegistry,
         router: WorkflowRouter,
         states: WorkflowStateManager,
@@ -145,14 +167,42 @@ class RuntimeEngine:
     ) -> None:
         """Bind one validated, resolved project to its collaborators.
 
-        `token_budget` is **required**. Module 4 accepts `None` and then answers
-        "everything fits" without measuring anything; no engine path may reach
-        that, so there is no default here to reach it with.
+        **There is no `token_budget` parameter, and that absence is the
+        contract.** The budget is derived here from the binding of the exact
+        provider this project resolves to, so the tokenizer that counts and the
+        window that bounds the count provably describe the model that will be
+        called. A caller cannot supply a budget for a different model, because
+        there is no argument through which to supply one at all.
+
+        That closes, at this boundary, the invalid state T-1 makes
+        unconstructible inside an adapter: *"Module 5 would count every string
+        precisely, against the wrong vocabulary, and report success."*
+        `ModelBinding` is the single source of truth for the pairing; nothing is
+        duplicated or re-derived from it.
+
+        Provider resolution here is a **local configuration lookup** — a
+        registry dictionary read plus the declared-model assertion, both of
+        which `ProviderRegistry` already performs offline. No network call is
+        made, and `model_binding()` returns data the adapter cached at its own
+        construction.
+
+        A consequence worth naming: a provider misconfiguration now fails
+        **here**, at activation, rather than on a customer's first message.
+        §10.10 asks for exactly that — *"caught as a configuration error at
+        Validation Layer time, not mid-conversation."*
 
         Raises `ProjectNotActivatedError` if the validation result does not
-        prove *this* project passed.
+        prove *this* project passed, and a normalised `ProviderError` if the
+        project's declared provider cannot be resolved from the registry.
         """
+        # Activation first, deliberately: a project that never passed validation
+        # must be refused as unactivated, not as a provider misconfiguration.
         self._assert_activated(validation, resolved_context)
+        binding = providers.get_provider(resolved_context).model_binding()
+        token_budget = TokenBudgetManager(
+            tokenizer=binding.tokenizer,
+            capabilities=_BoundCapabilities(binding.capabilities),
+        )
         self._context = resolved_context
         self._validation = validation
         self._observability = (
