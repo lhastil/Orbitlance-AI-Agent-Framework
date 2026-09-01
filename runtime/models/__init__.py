@@ -5,6 +5,7 @@ Each model names its owning module in its docstring; ownership is a discipline
 the frozen spec defines, not something the package layout can enforce.
 """
 
+from runtime.models.audit import AuditEvent, AuditFilters
 from runtime.models.conversation import (
     ConversationContext,
     Turn,
@@ -55,6 +56,8 @@ from runtime.models.workflow import WorkflowTransitionDecision
 
 __all__ = [
     "ASSEMBLY_ORDER",
+    "AuditEvent",
+    "AuditFilters",
     "Checkpoint",
     "ConversationContext",
     "CoreBundle",

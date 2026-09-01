@@ -12,9 +12,9 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Eleven open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
-RE-3, RE-4, RE-5, AUDIT-6**, recorded during Modules 10, 11 and 14 and the §14
-post-implementation audit. None blocks the module it was found in; each needs a
+**Thirteen open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
+RE-3, RE-4, RE-5, AUDIT-6, OB-1, OB-3**, recorded during Modules 10, 11, 14 and
+15, and the §14 post-implementation audit. None blocks the module it was found in; each needs a
 system-owner decision because closing it means ruling between frozen clauses,
 supplying a policy the framework does not define, or amending a frozen artifact.
 
@@ -96,6 +96,9 @@ one class.
 | **AUDIT-5** | **Channel semantics after the first turn** | **Documentation / Reporting** |
 | **AUDIT-6** | **A degraded turn always returns `escalate=False`** | **Architecture Issue** |
 | **AUDIT-7** | **`RuntimeEngine` inspection surface beyond §14.6** | **Documentation / Reporting** |
+| **OB-1** | **Audit persistence is in-memory and not durable (§15.8 partial)** | **Architecture Issue** |
+| **OB-2** | **§15.12(d) duplicate-ID scenario cannot arise; not faked** | **Documentation / Reporting** |
+| **OB-3** | **§15.9 audit-gap alert has no seam** | **Architecture Issue** |
 | **PA-4** | **§4 cites an assembly order in a section that does not exist** | **Documentation / Reporting** |
 | **PA-5** | **Playbook provenance check inspected only the first source** | **Closed** |
 | **PA-6** | **Runtime provenance cannot prove content origin** | **Documentation / Reporting** |
@@ -1702,6 +1705,150 @@ An earlier reading held that the Runtime Engine's *existence* triggered ADR
 no locks, verified structurally and recorded as RE-3. The forcing function is
 concurrent request handling or parallel validation, **not** the module existing.
 V-7 must be addressed before either lands; §15 is not the trigger.
+
+---
+
+## Found during Runtime Module 15 (Observability / Audit Logger), 2026-09-01
+
+### §15 implementation status, clause by clause
+
+Recorded because §15 is **partially implemented**, and the parts that are not
+must be visible rather than inferred from the fact that tests pass.
+
+| Clause | Requirement | Status |
+|---|---|---|
+| 15.1 | one consistent interface for auditable events | **PASS** |
+| 15.2 | accept structured events from any module | **PASS** — no central enum; any module may emit its own type |
+| 15.2 | timestamp them | **PASS** — ISO-8601 UTC, matching `SessionManager`'s convention |
+| 15.2 | tag with `project_id`/`conversation_id` | **PASS** |
+| 15.2 | persist them | **PARTIAL** — in memory only, see **OB-1** |
+| 15.2 | expose a query interface | **PASS** for the three ruled filters |
+| 15.3 | pure recorder, never decides | **PASS** — structurally asserted |
+| 15.3 | never logs raw credentials or disallowed PII | **PASS** — verified end to end |
+| 15.4 | inputs: type, project_id, conversation_id, payload | **PASS** |
+| 15.5 | persistence confirmation; queryable records | **PASS** — `log_event` returns the stored event |
+| 15.6 | `logEvent` · `queryAuditLog` | **PASS** |
+| 15.7 | leaf module | **PASS** — imports `runtime.models` and the standard library only |
+| 15.8 | **durable**, ideally append-only store | **PARTIAL** — append-only ✅, durable ❌, see **OB-1** |
+| 15.9 | store failure must not block the conversation | **PASS** |
+| 15.9 | must raise its own alert/metric | **OPEN** — see **OB-3** |
+| 15.10 | events immutable once written | **PASS** |
+| 15.11 | structured export for compliance reporting | **DEFERRED** — future extension point |
+| 15.12(a) | log and retrieve | **PASS** |
+| 15.12(b) | unavailability doesn't block the flow | **PASS** |
+| 15.12(c) | no raw credential in a payload | **PASS** |
+| 15.12(d) | duplicate event ID rejected or versioned | **STRUCTURALLY UNENFORCEABLE** — see **OB-2** |
+
+---
+
+### OB-1 — Audit persistence is in-memory and therefore not durable
+
+**Class: Architecture Issue** · Ruled for this milestone · **Open.**
+
+§15.8 names the external dependency as *"a durable, ideally append-only log
+store."* This milestone implements the seam — an `AuditLogStore` Protocol — and
+one implementation, `InMemoryAuditLogStore`, following the pattern three
+committed modules already use (`ProjectCache`, `SessionStore`,
+`WorkflowStateStore`).
+
+**Append-only is satisfied. Durable is not.** Events live for the process's
+lifetime and are lost when it ends. §15.8 is therefore **partially met**, and
+this entry exists so that is never read as satisfied.
+
+Introducing SQLite, a database client, a filesystem store or any third-party
+package was explicitly out of scope: `dependencies = []` still holds, and
+choosing a persistence technology is an architectural decision, not an
+implementation detail.
+
+**To close it:** authorize a durable `AuditLogStore` implementation. The seam
+requires no other change — `AuditLogger` takes any store satisfying the
+Protocol, and `activate` is the single place the in-memory one is constructed.
+
+Pinned by `test_a_durable_store_can_replace_the_in_memory_one` and
+`test_the_store_is_a_protocol_with_an_in_memory_implementation`.
+
+---
+
+### OB-2 — §15.12(d)'s duplicate-ID scenario cannot arise, and is not faked
+
+**Class: Documentation / Reporting** · Consequence of the ruled identity model.
+
+§15.12(d) requires that *"a second write to the same event ID is rejected or
+versioned, never overwritten."* But **the logger generates every event id**
+(`uuid4().hex`, following `SessionManager`'s precedent) and a caller cannot
+supply one: whatever `AuditEvent.event_id` holds on the way in is replaced.
+
+So two writes can never share an id, and the scenario the clause describes
+**cannot arise from outside this module**. No artificial duplicate detection was
+written to make the clause appear satisfied — a check that can never fire is
+worse than an honest absence, because it looks like protection.
+
+Note what *is* satisfied: the store never overwrites, later writes never disturb
+earlier events, and retrieved events are frozen. The immutability §15.10
+actually requires holds; only the duplicate-detection framing of §15.12(d) is
+inapplicable.
+
+**This would change** if a future ruling let callers supply ids — at which point
+duplicate rejection becomes both meaningful and required.
+
+Pinned by `test_an_id_a_caller_puts_on_an_event_is_replaced`,
+`test_logging_the_same_event_twice_produces_two_records` and
+`test_no_duplicate_detection_was_written`.
+
+---
+
+### OB-3 — §15.9's audit-gap alert has no seam to be raised through
+
+**Class: Architecture Issue** · **Open.**
+
+§15.9 has two halves. The first — *"must not block the conversation from
+proceeding"* — is satisfied: the Runtime Engine guards the logger call, and a
+store that raises changes nothing about the `RuntimeResponse`.
+
+The second is not: *"it must raise its own alert/metric, since a silent
+audit-logging gap is itself a Compliance risk."*
+
+**The repository has no metrics or alerting seam.** `logging` appears once, in
+`validation/pipeline.py`, logging a rule id. Inventing a monitoring abstraction
+or an external dependency to satisfy the wording was out of scope, and a
+speculative one would be surface with no consumer.
+
+The smallest honest seam identified — and **not** implemented, because it needs
+a ruling — is a callback on the Runtime Engine's containment guard, invoked when
+`log_event` raises. It changes no frozen contract and adds no dependency, but it
+introduces a public abstraction §15 does not name.
+
+**Until then a failing audit store is silent**, which is exactly the Compliance
+risk §15.9 names. Pinned by `test_the_logger_raises_no_alert_of_its_own`.
+
+---
+
+### RE-4 — reconciliation
+
+**Was:** *"The default runtime keeps no audit trail"* — the engine defaulted to
+`NullObservabilitySink`, which discarded every event.
+
+**Now: partially resolved.** `RuntimeEngine` requires an `AuditLog`; there is no
+default and no null sink, so an engine that exists is an engine that records.
+`activate` constructs a real `AuditLogger` per activation, so the production path
+keeps a queryable trail.
+
+**RE-4 remains open** on its durability half: the trail survives only as long as
+the process (**OB-1**), and a failing store is still silent (**OB-3**). The
+entry is not closed, because "keeps an audit trail" and "keeps a durable,
+monitored audit trail" are different claims.
+
+---
+
+### The §14 placeholder was removed, not extended
+
+`runtime/runtime_engine/ports.py` — which defined `ObservabilitySink` and
+`NullObservabilitySink` — was **deleted**. Its own docstring said it would be:
+*"§14-local: when §15 is built it owns the contract, and this Protocol is
+replaced rather than extended."* The Runtime Engine now depends on
+`runtime.observability.AuditLog` and owns no audit semantics: it builds an event
+from the turn's outcome, hands it over, and contains any failure. It does not
+generate identity, timestamp, store, query, filter, or decide retention.
 
 ---
 

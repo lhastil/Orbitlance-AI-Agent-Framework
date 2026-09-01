@@ -27,8 +27,9 @@ become a place for project-scoped state to accumulate.
 ## The two invariants this function owns
 
 **Project-scoped collaborators (AUDIT-2).** Every activation constructs its own
-`SessionManager` and `WorkflowStateManager`. They are **not parameters**, so
-there is no way to hand the same store to two projects through this path.
+`SessionManager`, `WorkflowStateManager` and `AuditLogger`. They are **not
+parameters**, so there is no way to hand the same store to two projects through
+this path.
 
 That matters because §12.6 and §7.6 are frozen and key every method on
 `conversation_id` alone — `appendTurn(conversation_id, …)`,
@@ -43,12 +44,22 @@ does *not* accept one. `RuntimeEngine` derives it from the binding of the
 provider the project actually resolves to. Passing one through here would
 re-open the very injection point AUDIT-1 exists to close.
 
+**A real audit logger, not a placeholder (RE-4).** Every activation gets an
+`AuditLogger` over its own `InMemoryAuditLogStore`, so the production path keeps
+an audit trail rather than discarding events. The store is in-memory and
+therefore **not durable** — §15.8 is only partially met, recorded as OB-1 — but
+the trail exists and is queryable for the process's lifetime, which the previous
+null sink did not provide at all.
+
 ## What is not yet reachable through this path
 
 `activate` takes exactly the four arguments its contract names, so the engine it
-returns has an empty `ToolExecutor` and the null observability sink. Both are
-correct *today* — nothing produces a `ToolRequest` (TE-1), and §15 does not
-exist (RE-4). When either changes, this signature is where the wiring goes.
+returns has an empty `ToolExecutor`. That is correct *today* — nothing produces
+a `ToolRequest` (TE-1). When it does, this signature is where the wiring goes.
+
+A durable audit store would arrive the same way: `AuditLogger` takes an
+`AuditLogStore`, so replacing the in-memory one is a change here and nowhere
+else.
 """
 
 from __future__ import annotations
@@ -58,6 +69,7 @@ from pathlib import Path
 from runtime.guardrail import GuardrailEngine
 from runtime.loader import FilesystemProjectSource, ProjectLoader
 from runtime.models.core_bundle import CoreBundle
+from runtime.observability import AuditLogger, InMemoryAuditLogStore
 from runtime.provider_registry import ProviderRegistry
 from runtime.resolver import Resolver
 from runtime.runtime_engine.engine import RuntimeEngine
@@ -116,4 +128,5 @@ def activate(
         router=WorkflowRouter(),
         states=WorkflowStateManager(),
         tools=ToolExecutor(),
+        audit=AuditLogger(InMemoryAuditLogStore()),
     )

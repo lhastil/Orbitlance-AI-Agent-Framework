@@ -86,31 +86,40 @@ C-10 stay open.
 
 ## Observability
 
-§14.2 ends with "observability logging", and §15 does not exist. The engine
-emits exactly one event per turn through an injected `ObservabilitySink`,
-defaulting to one that does nothing.
+§14.2 ends with "observability logging". The engine emits exactly one
+`AuditEvent` per turn through §15's `AuditLog`, which is **required** — there is
+no default, and no null sink, so an engine that exists is an engine that records.
 
-It is the engine's own final act rather than a pipeline stage, deliberately: a
-stage would be skipped whenever a block or a contained failure short-circuits
-the turn, and those are the turns most worth recording. §15.9's rule that a
-logging failure *"must not block the conversation from proceeding"* is honoured
-by guarding the call — but note the other half of that clause, that a silent
-audit gap is itself a Compliance risk, is currently unmet by the null default
-(RE-4).
+**§15 owns the audit contract; this module does not.** It builds an event from
+what it already knows about the turn's outcome and hands it over. It does not
+generate the event's identity, timestamp it, store it, query it, filter it,
+decide retention, or read anything back — §15.3 makes the logger a pure
+recorder, and the mirror of that is an engine that does no audit work.
+
+Emitting is the engine's own final act rather than a pipeline stage,
+deliberately: a stage would be skipped whenever a block or a contained failure
+short-circuits the turn, and those are the turns most worth recording.
+
+§15.9's rule that a logging failure *"must not block the conversation from
+proceeding"* is honoured by a thin guard around the call — the one piece of
+audit-adjacent code that stays here, because containment is a property of the
+conversation, not of the log. What the guard cannot do is raise the alert §15.9
+also asks for: the repository has no metrics seam (OB-3).
 """
 
 from __future__ import annotations
 
 from runtime.budget import TokenBudgetManager
 from runtime.guardrail import GuardrailEngine
+from runtime.models.audit import AuditEvent
 from runtime.models.core_bundle import CoreBundle
 from runtime.models.provider import ProviderCapabilities
 from runtime.models.resolved_context import ResolvedContext
 from runtime.models.runtime import RuntimeRequest, RuntimeResponse
 from runtime.models.validation import ValidationResult, ValidationTarget
+from runtime.observability import AuditLog
 from runtime.provider_registry import ProviderRegistry
 from runtime.runtime_engine.errors import ProjectNotActivatedError
-from runtime.runtime_engine.ports import NullObservabilitySink, ObservabilitySink
 from runtime.runtime_engine.stages import Stage, TurnState, build_pipeline
 from runtime.session import SessionManager
 from runtime.tool_executor import ToolExecutor
@@ -149,7 +158,7 @@ class _BoundCapabilities:
 class RuntimeEngine:
     """§14.6's single member, over an activated project."""
 
-    __slots__ = ("_context", "_validation", "_pipeline", "_observability")
+    __slots__ = ("_context", "_validation", "_pipeline", "_audit")
 
     def __init__(
         self,
@@ -163,7 +172,7 @@ class RuntimeEngine:
         router: WorkflowRouter,
         states: WorkflowStateManager,
         tools: ToolExecutor,
-        observability: ObservabilitySink | None = None,
+        audit: AuditLog,
     ) -> None:
         """Bind one validated, resolved project to its collaborators.
 
@@ -205,9 +214,7 @@ class RuntimeEngine:
         )
         self._context = resolved_context
         self._validation = validation
-        self._observability = (
-            observability if observability is not None else NullObservabilitySink()
-        )
+        self._audit = audit
         self._pipeline: tuple[Stage, ...] = build_pipeline(
             core=core,
             context=resolved_context,
@@ -338,8 +345,13 @@ class RuntimeEngine:
         forbids logging PII beyond an allowance nobody has written.
         """
         try:
-            self._observability.record(
-                event_type, request.project_id, request.conversation_id, payload
+            self._audit.log_event(
+                AuditEvent(
+                    type=event_type,
+                    project_id=request.project_id,
+                    conversation_id=request.conversation_id,
+                    payload=payload,
+                )
             )
         except Exception:  # noqa: BLE001 - §15.9: never blocks the conversation
             return

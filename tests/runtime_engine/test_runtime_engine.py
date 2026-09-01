@@ -29,6 +29,7 @@ import pytest
 from runtime.core_loader import CoreLoader, FilesystemCoreSource
 from runtime.guardrail import GuardrailEngine
 from runtime.loader import FilesystemProjectSource, ProjectLoader
+from runtime.models.audit import AuditEvent, AuditFilters
 from runtime.models.conversation import TurnRole
 from runtime.models.core_bundle import CoreBundle
 from runtime.models.prompt_bundle import PromptBundle
@@ -41,6 +42,7 @@ from runtime.models.resolved_context import ResolvedContext
 from runtime.models.runtime import RuntimeRequest, RuntimeResponse
 from runtime.models.tool import ToolRequest, ToolResponse
 from runtime.models.validation import ValidationResult, ValidationTarget
+from runtime.observability import AuditLogger
 from runtime.provider import (
     ModelBinding,
     ModelIdentity,
@@ -52,7 +54,6 @@ from runtime.provider import (
 from runtime.provider_registry import ProviderNotRegisteredError, ProviderRegistry
 from runtime.resolver import Resolver
 from runtime.runtime_engine import (
-    NullObservabilitySink,
     ProjectNotActivatedError,
     RuntimeEngine,
     activate,
@@ -156,16 +157,36 @@ class AdapterCapabilities:
 
 
 class RecordingSink:
-    def __init__(self) -> None:
-        self.events: list[tuple[str, str, str, dict]] = []
+    """An `AuditLog` double that keeps what the engine handed it."""
 
-    def record(self, event_type, project_id, conversation_id, payload) -> None:  # noqa: ANN001
-        self.events.append((event_type, project_id, conversation_id, dict(payload)))
+    def __init__(self) -> None:
+        self.logged: list[AuditEvent] = []
+
+    def log_event(self, event: AuditEvent) -> AuditEvent:
+        self.logged.append(event)
+        return event
+
+    def query_audit_log(self, filters: AuditFilters) -> tuple[AuditEvent, ...]:
+        return tuple(e for e in self.logged if filters.matches(e))
+
+    @property
+    def events(self) -> list[tuple[str, str, str, dict]]:
+        """The old four-tuple view, so existing assertions still read clearly."""
+        return [
+            (e.type, e.project_id, e.conversation_id, dict(e.payload))
+            for e in self.logged
+        ]
 
 
 class ExplodingSink:
-    def record(self, event_type, project_id, conversation_id, payload) -> None:  # noqa: ANN001
-        del event_type, project_id, conversation_id, payload
+    """A logger whose store is down. §15.9: this must not matter."""
+
+    def log_event(self, event: AuditEvent) -> AuditEvent:
+        del event
+        raise RuntimeError("the audit store is down")
+
+    def query_audit_log(self, filters: AuditFilters) -> tuple[AuditEvent, ...]:
+        del filters
         raise RuntimeError("the audit store is down")
 
 
@@ -209,7 +230,7 @@ def build_engine(
         router=WorkflowRouter(),
         states=WorkflowStateManager(),
         tools=tools if tools is not None else ToolExecutor(),
-        observability=observability,
+        audit=observability if observability is not None else AuditLogger(),
     )
     return engine, adapter, registry
 
@@ -318,6 +339,7 @@ def test_2_an_invalid_project_cannot_construct_an_engine(core: CoreBundle) -> No
             router=WorkflowRouter(),
             states=WorkflowStateManager(),
             tools=ToolExecutor(),
+            audit=AuditLogger(),
         )
 
 
@@ -338,6 +360,7 @@ def test_2_a_validation_result_for_another_project_is_refused(
             router=WorkflowRouter(),
             states=WorkflowStateManager(),
             tools=ToolExecutor(),
+            audit=AuditLogger(),
         )
 
 
@@ -357,6 +380,7 @@ def test_2_a_core_validation_result_is_refused(
             router=WorkflowRouter(),
             states=WorkflowStateManager(),
             tools=ToolExecutor(),
+            audit=AuditLogger(),
         )
 
 
@@ -416,6 +440,7 @@ def test_4_the_user_turn_survives_a_provider_failure(
         router=WorkflowRouter(),
         states=WorkflowStateManager(),
         tools=ToolExecutor(),
+        audit=AuditLogger(),
     )
     assert engine.handle_request(request("remember me")).degraded
     turns = sessions.get_context("conv-1").turns
@@ -438,6 +463,7 @@ def test_4_both_turns_are_recorded_on_a_successful_turn(
         router=WorkflowRouter(),
         states=WorkflowStateManager(),
         tools=ToolExecutor(),
+        audit=AuditLogger(),
     )
     engine.handle_request(request("hello"))
     turns = sessions.get_context("conv-1").turns
@@ -471,6 +497,7 @@ def test_5_the_pre_flight_guardrail_runs_on_every_turn(
         router=WorkflowRouter(),
         states=WorkflowStateManager(),
         tools=ToolExecutor(),
+        audit=AuditLogger(),
     )
     engine.handle_request(request("hello"))
     assert calls == ["hello"]
@@ -497,6 +524,7 @@ def test_5_a_pre_flight_block_short_circuits_before_the_provider(
         router=WorkflowRouter(),
         states=WorkflowStateManager(),
         tools=ToolExecutor(),
+        audit=AuditLogger(),
     )
     response = engine.handle_request(request())
     assert response.blocked
@@ -590,6 +618,7 @@ def test_6_a_mismatched_budget_can_no_longer_be_constructed(
         router=WorkflowRouter(),
         states=WorkflowStateManager(),
         tools=ToolExecutor(),
+        audit=AuditLogger(),
     )
     resolved = registry.get_provider(fixture_context)
     assert resolved.model_binding().identity == FIXTURE_IDENTITY
@@ -679,6 +708,7 @@ def test_8_a_provider_the_project_does_not_declare_fails_at_construction(
             router=WorkflowRouter(),
             states=WorkflowStateManager(),
             tools=ToolExecutor(),
+            audit=AuditLogger(),
         )
 
 
@@ -698,6 +728,7 @@ def test_8_the_activation_gate_still_precedes_provider_resolution(
             router=WorkflowRouter(),
             states=WorkflowStateManager(),
             tools=ToolExecutor(),
+            audit=AuditLogger(),
         )
 
 
@@ -723,6 +754,7 @@ def test_9_the_provider_response_reaches_the_post_response_guardrail(
         router=WorkflowRouter(),
         states=WorkflowStateManager(),
         tools=ToolExecutor(),
+        audit=AuditLogger(),
     )
     engine.handle_request(request())
     assert seen == [ANSWER]
@@ -778,6 +810,7 @@ def test_11_an_escalating_guardrail_sets_escalate(
         router=WorkflowRouter(),
         states=WorkflowStateManager(),
         tools=ToolExecutor(),
+        audit=AuditLogger(),
     )
     response = engine.handle_request(request())
     assert response.blocked and response.escalate
@@ -908,6 +941,7 @@ def test_15_the_first_turn_commits_the_discovery_transition(
         router=WorkflowRouter(),
         states=states,
         tools=ToolExecutor(),
+        audit=AuditLogger(),
     )
     engine.handle_request(request())
     assert states.get_state("conv-1").active_workflow == "discovery"
@@ -930,6 +964,7 @@ def test_15_a_blocked_turn_commits_no_transition(
         router=WorkflowRouter(),
         states=states,
         tools=ToolExecutor(),
+        audit=AuditLogger(),
     )
     engine.handle_request(request())
     assert states.get_state("conv-1").active_workflow is None
@@ -987,13 +1022,20 @@ def test_17_a_failing_sink_does_not_block_the_conversation(
     assert not response.degraded
 
 
-def test_17_the_default_sink_records_nothing(
+def test_17_the_engine_cannot_be_built_without_an_audit_log(
     core: CoreBundle, fixture_context: ResolvedContext
 ) -> None:
-    """RE-4: running on the default means keeping no audit trail."""
-    engine, _, _ = build_engine(core, fixture_context)
-    assert engine.handle_request(request()).text == ANSWER
-    assert NullObservabilitySink().record("e", "p", "c", {}) is None
+    """RE-4's other half: there is no null sink to fall back to any more.
+
+    `audit` is a required keyword argument with no default, so an engine that
+    exists is an engine that records. The previous placeholder discarded every
+    event; that default is gone.
+    """
+    import inspect
+
+    parameter = inspect.signature(RuntimeEngine.__init__).parameters["audit"]
+    assert parameter.default is inspect.Parameter.empty
+    del fixture_context, core
 
 
 # =============================================================================
@@ -1316,6 +1358,9 @@ def test_the_engine_package_depends_only_downward() -> None:
         "runtime.loader", "runtime.provider_registry", "runtime.resolver",
         "runtime.session", "runtime.tool_executor", "runtime.validation",
         "runtime.workflow_router", "runtime.workflow_state", "runtime.runtime_engine",
+        # §15 owns the audit contract the engine emits through — a downward edge
+        # to a leaf, which is what the frozen graph prescribes.
+        "runtime.observability",
     }
     for path in PACKAGE.glob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
