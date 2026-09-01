@@ -94,7 +94,7 @@ one class.
 | **RE-6** | **A blocked answer is not recorded as an agent turn** | **Documentation / Reporting** |
 | **RE-7** | **§14 publishes no camelCase alias; the convention is unsettled** | **Documentation / Reporting** |
 | **AUDIT-1** | **Budget and provider are never proven to describe the same model** | **Closed** — resolved globally |
-| **AUDIT-2** | **Cross-project session/workflow contamination via shared stores** | **Closed for the production activation path** (constructor escape hatch remains) |
+| **AUDIT-2** | **Cross-project session/workflow contamination via shared stores** | **AMENDED** — resolved for the production activation path; **open outside it** (constructor escape hatch remains) |
 | **AUDIT-3** | **`transition_history` grows with no-op entries** | **Runtime Improvement** |
 | **AUDIT-4** | **No production composition/activation root** | **Closed** — `activation.py` |
 | **AUDIT-5** | **Channel semantics after the first turn** | **Documentation / Reporting** |
