@@ -193,6 +193,20 @@ class ExplodingSink:
 # =============================================================================
 # real wiring — everything below the adapter is the framework itself
 # =============================================================================
+@pytest.fixture(autouse=True)
+def audit_database(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> pathlib.Path:
+    """Every `activate()` needs `ORBITLANCE_AUDIT_DB` (R-2), and gets its own.
+
+    The composition root fails fast without it, by design — a deployment that
+    keeps no durable audit trail must not start. Each test therefore points the
+    variable at its own temporary database, so nothing is shared between tests
+    and nothing is written outside `tmp_path`.
+    """
+    path = tmp_path / "activation-audit.sqlite3"
+    monkeypatch.setenv("ORBITLANCE_AUDIT_DB", str(path))
+    return path
+
+
 @pytest.fixture(scope="module")
 def core() -> CoreBundle:
     return CoreLoader(FilesystemCoreSource(REPO_ROOT / "core")).get_core_bundle()
@@ -1060,20 +1074,23 @@ def test_18_no_concurrency_machinery_exists() -> None:
 def test_19_no_credentials_environment_or_network() -> None:
     """No credential, environment or network access anywhere in the package.
 
-    `pathlib` is exempt in `activation.py` **only**, and only as a type: the
-    composition root's job is to *name* a projects root and hand it to
-    `FilesystemProjectSource`, which is the module the architecture grants
-    filesystem access. It opens nothing itself —
-    `test_activation_is_not_a_second_orchestrator` and
-    `test_activation_makes_no_provider_call` pin that separately. Everything
-    else in the package, engine and stages included, stays forbidden.
+    `pathlib` and `os` are exempt in `activation.py` **only**. The composition
+    root's job is to *name* a projects root and hand it to
+    `FilesystemProjectSource`, and — since OB-1's production wiring — to read
+    `ORBITLANCE_AUDIT_DB`, which is the one configuration mechanism this
+    repository has for a deployment-level path. It opens no socket and reads no
+    credential: `test_activation_is_not_a_second_orchestrator` and
+    `test_activation_makes_no_provider_call` pin that separately, and
+    `test_only_activation_reads_the_environment` below pins the exemption's
+    scope. Everything else in the package, engine and stages included, stays
+    forbidden.
     """
     forbidden = {
         "os", "socket", "requests", "httpx", "urllib", "smtplib", "http", "ssl",
         "subprocess", "pathlib",
     }
     for path, tree in trees():
-        allowed_here = {"pathlib"} if path.name == "activation.py" else set()
+        allowed_here = {"pathlib", "os"} if path.name == "activation.py" else set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
@@ -1082,8 +1099,39 @@ def test_19_no_credentials_environment_or_network() -> None:
             if isinstance(node, ast.ImportFrom):
                 root = (node.module or "").split(".")[0]
                 assert root not in forbidden - allowed_here, path.name
+            if isinstance(node, ast.Name) and path.name != "activation.py":
+                assert node.id not in {"os", "environ", "getenv"}, path.name
+
+
+def test_only_activation_reads_the_environment() -> None:
+    """The exemption is one file wide, and it is the composition root's.
+
+    `engine.py`, `stages.py` and `errors.py` still may not name `os`, `environ`
+    or `getenv` — the credential and configuration boundary is unchanged for
+    every file but the one that owns deployment configuration.
+    """
+    for path, tree in trees():
+        if path.name == "activation.py":
+            continue
+        for node in ast.walk(tree):
             if isinstance(node, ast.Name):
                 assert node.id not in {"os", "environ", "getenv"}, path.name
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert alias.name.split(".")[0] != "os", path.name
+
+
+def test_activation_reads_only_the_audit_database_variable() -> None:
+    """One variable, named once, and no other environment access."""
+    source = (PACKAGE / "activation.py").read_text(encoding="utf-8")
+    assert source.count("ORBITLANCE_AUDIT_DB") >= 1
+    tree = ast.parse(source)
+    reads = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and node.attr == "environ"
+    ]
+    assert len(reads) == 1, "activation reads the environment exactly once"
 
 
 def test_19_only_the_composition_root_names_a_filesystem_path() -> None:
@@ -1305,8 +1353,10 @@ def test_activation_makes_no_provider_call(core: CoreBundle) -> None:
     activate(core, FIXTURES, FIXTURE_ID, registry)
     assert adapter.calls == [], "activation must not call the provider"
 
+    # `os` is deliberately absent from this set: reading ORBITLANCE_AUDIT_DB is
+    # deployment configuration, not a provider call. Network modules stay banned.
     tree = ast.parse((PACKAGE / "activation.py").read_text(encoding="utf-8"))
-    forbidden = {"os", "socket", "requests", "httpx", "urllib", "http", "ssl"}
+    forbidden = {"socket", "requests", "httpx", "urllib", "http", "ssl"}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:

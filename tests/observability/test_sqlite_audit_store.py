@@ -38,6 +38,7 @@ from runtime.observability.adapters.sqlite_store import (
 )
 from runtime.provider_registry import ProviderRegistry
 from runtime.runtime_engine import activate
+from runtime.runtime_engine.errors import AuditStoreNotConfiguredError
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 ADAPTERS = REPO_ROOT / "runtime" / "observability" / "adapters"
@@ -91,6 +92,20 @@ def event(
         event_id=event_id,
         timestamp=timestamp,
     )
+
+
+@pytest.fixture(autouse=True)
+def audit_database(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> pathlib.Path:
+    """Every `activate()` needs `ORBITLANCE_AUDIT_DB` (R-2), and gets its own.
+
+    The composition root fails fast without it, by design — a deployment that
+    keeps no durable audit trail must not start. Each test therefore points the
+    variable at its own temporary database, so nothing is shared between tests
+    and nothing is written outside `tmp_path`.
+    """
+    path = tmp_path / "activation-audit.sqlite3"
+    monkeypatch.setenv("ORBITLANCE_AUDIT_DB", str(path))
+    return path
 
 
 @pytest.fixture
@@ -449,7 +464,7 @@ def core() -> CoreBundle:
     return CoreLoader(FilesystemCoreSource(REPO_ROOT / "core")).get_core_bundle()
 
 
-def test_a_failing_durable_store_does_not_change_the_response(
+def test_a_substituted_failing_store_does_not_change_the_response(
     core: CoreBundle, tmp_path: pathlib.Path
 ) -> None:
     """§15.9 end to end, with the durable adapter behind a real engine."""
@@ -478,26 +493,197 @@ def test_a_failing_durable_store_does_not_change_the_response(
     assert not degraded_attempt.degraded
 
 
-def test_the_production_path_still_uses_the_in_memory_store(
-    core: CoreBundle,
+def test_the_production_path_uses_the_durable_store(
+    core: CoreBundle, audit_database: pathlib.Path
 ) -> None:
-    """OB-1 is *not* closed by this change: `activate()` is untouched.
+    """OB-1's production wiring: `activate()` builds a durable store.
 
-    "Durable adapter implemented" is not "production audit persistence
-    durable", and this test is what keeps the two apart.
+    The assertion this replaces asserted the opposite — that the production path
+    used `InMemoryAuditLogStore`. It was correct when written; what it pinned has
+    now deliberately changed, and the register records the transition.
     """
     from tests.runtime_engine.test_runtime_engine import FixtureAdapter
 
     engine = activate(
         core, FIXTURES, FIXTURE_ID, ProviderRegistry().register(FixtureAdapter())
     )
-    assert isinstance(engine._audit._store, InMemoryAuditLogStore)  # noqa: SLF001
+    store = engine._audit._store  # noqa: SLF001
+    assert isinstance(store, SqliteAuditLogStore)
+    assert store.database_path == audit_database
+    assert audit_database.exists()
 
+
+def test_activation_wires_the_adapter_and_no_longer_the_in_memory_store() -> None:
+    """Structural: the composition root names the durable store."""
     activation = (
         REPO_ROOT / "runtime" / "runtime_engine" / "activation.py"
     ).read_text(encoding="utf-8")
-    assert "SqliteAuditLogStore" not in activation
-    assert "InMemoryAuditLogStore" in activation
+    assert "SqliteAuditLogStore" in activation
+    assert "InMemoryAuditLogStore" not in activation
+    assert "ORBITLANCE_AUDIT_DB" in activation
+
+
+def test_the_in_memory_store_remains_the_loggers_default() -> None:
+    """No longer the production store, but still the seam default.
+
+    `AuditLogger()` with no store keeps working — every §15 unit test relies on
+    it, and removing it would be a change nothing asked for.
+    """
+    assert isinstance(AuditLogger()._store, InMemoryAuditLogStore)  # noqa: SLF001
+
+
+# =============================================================================
+# activation-time configuration failure — R-2 / R-4
+# =============================================================================
+def test_activation_fails_when_the_audit_database_is_not_configured(
+    core: CoreBundle, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R-2/R-4: absent ORBITLANCE_AUDIT_DB fails fast, with no default guessed."""
+    from tests.runtime_engine.test_runtime_engine import FixtureAdapter
+
+    monkeypatch.delenv("ORBITLANCE_AUDIT_DB", raising=False)
+    with pytest.raises(AuditStoreNotConfiguredError, match="ORBITLANCE_AUDIT_DB"):
+        activate(
+            core, FIXTURES, FIXTURE_ID, ProviderRegistry().register(FixtureAdapter())
+        )
+
+
+def test_an_empty_audit_database_variable_is_treated_as_absent(
+    core: CoreBundle, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.runtime_engine.test_runtime_engine import FixtureAdapter
+
+    monkeypatch.setenv("ORBITLANCE_AUDIT_DB", "")
+    with pytest.raises(AuditStoreNotConfiguredError):
+        activate(
+            core, FIXTURES, FIXTURE_ID, ProviderRegistry().register(FixtureAdapter())
+        )
+
+
+def test_activation_fails_when_the_configured_path_is_unusable(
+    core: CoreBundle, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M-1: an unusable path is the adapter's error, not the absent-config one.
+
+    `SqliteAuditLogStoreError` propagates unchanged — it already names the path
+    and the underlying reason, and wrapping it would hide both.
+    """
+    from tests.runtime_engine.test_runtime_engine import FixtureAdapter
+
+    directory = tmp_path / "not-a-file"
+    directory.mkdir()
+    monkeypatch.setenv("ORBITLANCE_AUDIT_DB", str(directory))
+    with pytest.raises(SqliteAuditLogStoreError):
+        activate(
+            core, FIXTURES, FIXTURE_ID, ProviderRegistry().register(FixtureAdapter())
+        )
+
+
+def test_the_two_activation_failures_are_distinct_types() -> None:
+    """Absent configuration and an unusable path are different faults."""
+    assert not issubclass(SqliteAuditLogStoreError, AuditStoreNotConfiguredError)
+    assert not issubclass(AuditStoreNotConfiguredError, SqliteAuditLogStoreError)
+    assert issubclass(AuditStoreNotConfiguredError, ValueError)
+
+
+def test_activate_still_takes_exactly_four_arguments() -> None:
+    """R-2: the environment carries the path; the signature is unchanged."""
+    import inspect
+
+    assert list(inspect.signature(activate).parameters) == [
+        "core",
+        "projects_root",
+        "project_id",
+        "providers",
+    ]
+
+
+# =============================================================================
+# end-to-end durability through the production path — R-1
+# =============================================================================
+def test_a_request_through_activate_is_durably_recorded(
+    core: CoreBundle, audit_database: pathlib.Path
+) -> None:
+    """The OB-1 proof: activate -> request -> readable from a *new* store.
+
+    Nothing here reuses the engine's own store object. The events are read back
+    through a store constructed from scratch over the same path, which is the
+    ruled definition of durable.
+    """
+    from tests.runtime_engine.test_runtime_engine import FixtureAdapter
+
+    engine = activate(
+        core, FIXTURES, FIXTURE_ID, ProviderRegistry().register(FixtureAdapter())
+    )
+    response = engine.handle_request(
+        RuntimeRequest(FIXTURE_ID, "conv-durable", "What do you offer?", "web")
+    )
+    assert response.text
+    del engine
+
+    reopened = SqliteAuditLogStore(audit_database)
+    recorded = reopened.query(AuditFilters())
+    assert len(recorded) == 1
+    assert recorded[0].type == "runtime.turn_completed"
+    assert recorded[0].project_id == FIXTURE_ID
+    assert recorded[0].conversation_id == "conv-durable"
+    assert recorded[0].event_id and recorded[0].timestamp
+
+
+def test_the_durable_record_carries_no_customer_content(
+    core: CoreBundle, audit_database: pathlib.Path
+) -> None:
+    """§15.3 survives the move to durable storage — payload rules are unchanged."""
+    from tests.runtime_engine.test_runtime_engine import FixtureAdapter
+
+    engine = activate(
+        core, FIXTURES, FIXTURE_ID, ProviderRegistry().register(FixtureAdapter())
+    )
+    engine.handle_request(
+        RuntimeRequest(FIXTURE_ID, "conv-1", "my number is 555 0100", "web")
+    )
+    stored = SqliteAuditLogStore(audit_database).query(AuditFilters())[0]
+    joined = " ".join(stored.payload.values())
+    assert "555" not in joined
+    assert set(stored.payload) <= {
+        "blocked",
+        "escalate",
+        "degraded",
+        "channel",
+        "failed_stage",
+    }
+
+
+def test_a_write_failure_after_activation_leaves_the_response_identical(
+    core: CoreBundle, audit_database: pathlib.Path
+) -> None:
+    """R-4: activation may fail; a post-activation write failure may not.
+
+    The database is corrupted *after* the engine exists, so activation succeeded
+    and the failure lands on the audit write path — where §15.9's containment
+    applies and `RuntimeResponse` must be byte-identical.
+    """
+    from tests.runtime_engine.test_runtime_engine import FixtureAdapter
+
+    healthy_engine = activate(
+        core, FIXTURES, FIXTURE_ID, ProviderRegistry().register(FixtureAdapter())
+    )
+    healthy = healthy_engine.handle_request(
+        RuntimeRequest(FIXTURE_ID, "conv-1", "hello", "web")
+    )
+
+    broken_engine = activate(
+        core, FIXTURES, FIXTURE_ID, ProviderRegistry().register(FixtureAdapter())
+    )
+    audit_database.write_bytes(b"this is not a database")
+    degraded_attempt = broken_engine.handle_request(
+        RuntimeRequest(FIXTURE_ID, "conv-2", "hello", "web")
+    )
+
+    assert degraded_attempt == healthy
+    assert not degraded_attempt.blocked
+    assert not degraded_attempt.degraded
+    assert not degraded_attempt.escalate
 
 
 # =============================================================================
@@ -551,10 +737,15 @@ def test_the_adapters_package_imports_no_implementation() -> None:
     assert not [n for n in ast.walk(tree) if isinstance(n, ast.Import | ast.ImportFrom)]
 
 
-def test_nothing_in_the_runtime_imports_the_adapter() -> None:
-    """It is reachable only by an explicit import that nothing makes today."""
+def test_only_the_composition_root_imports_the_adapter() -> None:
+    """One sanctioned importer, named — the same shape as the store guard above.
+
+    Choosing where audit records live is the composition root's job (AUDIT-4).
+    No other module may reach for a storage technology.
+    """
+    activation = REPO_ROOT / "runtime" / "runtime_engine" / "activation.py"
     for path in (REPO_ROOT / "runtime").rglob("*.py"):
-        if path.parent == ADAPTERS:
+        if path.parent == ADAPTERS or path == activation:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):

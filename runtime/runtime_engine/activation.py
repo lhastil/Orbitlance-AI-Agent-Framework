@@ -27,9 +27,14 @@ become a place for project-scoped state to accumulate.
 ## The two invariants this function owns
 
 **Project-scoped collaborators (AUDIT-2).** Every activation constructs its own
-`SessionManager`, `WorkflowStateManager` and `AuditLogger`. They are **not
-parameters**, so there is no way to hand the same store to two projects through
-this path.
+`SessionManager` and `WorkflowStateManager`. They are **not parameters**, so
+there is no way to hand the same store to two projects through this path.
+
+The audit log is the one deliberate exception, and it is worth stating rather
+than leaving to be discovered: every activation gets its own `AuditLogger` and
+its own store *object*, but those objects address **one shared database**, so
+audit isolation is **logical** — enforced by `project_id` filtering — where
+session and workflow isolation remain **structural**. See below.
 
 That matters because §12.6 and §7.6 are frozen and key every method on
 `conversation_id` alone — `appendTurn(conversation_id, …)`,
@@ -44,35 +49,58 @@ does *not* accept one. `RuntimeEngine` derives it from the binding of the
 provider the project actually resolves to. Passing one through here would
 re-open the very injection point AUDIT-1 exists to close.
 
-**A real audit logger, not a placeholder (RE-4).** Every activation gets an
-`AuditLogger` over its own `InMemoryAuditLogStore`, so the production path keeps
-an audit trail rather than discarding events. The store is in-memory and
-therefore **not durable** — §15.8 is only partially met, recorded as OB-1 — but
-the trail exists and is queryable for the process's lifetime, which the previous
-null sink did not provide at all.
+**A durable audit log (OB-1).** Every activation gets an `AuditLogger` over a
+`SqliteAuditLogStore` opened on the path `ORBITLANCE_AUDIT_DB` names. §15.2
+makes persisting audit events a *responsibility*, not an optional extra, so the
+production path no longer keeps its trail in memory and lose it when the process
+ends.
+
+The database path arrives through the environment because `activate`'s signature
+is fixed at four arguments and this repository has no configuration mechanism —
+no settings object, no config file, no CLI. The variable **is** the
+deployment-level configuration, and there is deliberately **no default**: an
+absent variable raises `AuditStoreNotConfiguredError` rather than writing
+customer-linked records somewhere nobody chose.
+
+**Isolation, stated precisely (AUDIT-2).** One database serves every activation
+in a process. `project_id` is on every event and is a query filter, and a
+`project_id` query never returns another project's rows — but that is
+**filter-enforced, not structural**, which is a real change from separate
+in-memory stores. Sessions and workflow state are **unaffected**: those
+collaborators are still constructed per activation and remain structurally
+isolated.
+
+**Nothing about concurrency changed.** No lock, no thread, no pool, no
+multi-process guarantee. RE-3's single-threaded posture holds and ADR 0003's V-7
+deadline is not triggered. Two processes sharing one database file is out of
+scope and unclaimed.
+
+**Still out of scope, and not claimed:** retention (records are kept
+indefinitely), access control (whatever the host filesystem provides), corrupt-
+record recovery, and the audit-gap alert §15.9 also asks for — **OB-3 remains
+open**, so a write that fails after activation is still silent.
 
 ## What is not yet reachable through this path
 
 `activate` takes exactly the four arguments its contract names, so the engine it
 returns has an empty `ToolExecutor`. That is correct *today* — nothing produces
 a `ToolRequest` (TE-1). When it does, this signature is where the wiring goes.
-
-A durable audit store would arrive the same way: `AuditLogger` takes an
-`AuditLogStore`, so replacing the in-memory one is a change here and nowhere
-else.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from runtime.guardrail import GuardrailEngine
 from runtime.loader import FilesystemProjectSource, ProjectLoader
 from runtime.models.core_bundle import CoreBundle
-from runtime.observability import AuditLogger, InMemoryAuditLogStore
+from runtime.observability import AuditLogger
+from runtime.observability.adapters.sqlite_store import SqliteAuditLogStore
 from runtime.provider_registry import ProviderRegistry
 from runtime.resolver import Resolver
 from runtime.runtime_engine.engine import RuntimeEngine
+from runtime.runtime_engine.errors import AuditStoreNotConfiguredError
 from runtime.session import SessionManager
 from runtime.tool_executor import ToolExecutor
 from runtime.validation import Validator
@@ -95,6 +123,12 @@ def activate(
 
     Raises rather than returning a partly-activated engine:
 
+    * `AuditStoreNotConfiguredError` — `ORBITLANCE_AUDIT_DB` is unset or empty.
+      Checked **first**, before anything is loaded, so a deployment learns its
+      audit configuration is missing before it learns anything else;
+    * `SqliteAuditLogStoreError` — the variable is set but the database cannot
+      be opened, created or initialised. Propagates unchanged from the adapter,
+      which already names the path and the underlying reason;
     * `ProjectNotFoundError` / `InvalidProjectIdError` — the project cannot be
       loaded;
     * `ProjectNotActivatedError` — it loaded but did not pass validation, or the
@@ -107,10 +141,21 @@ def activate(
     decision *"at project-activation/deploy time — not re-validated on every
     single message, for performance"*, and `handle_request` never asks again.
 
-    No network call occurs. The Loader reads the filesystem, the Resolver and
-    Validator are pure over in-memory structures, and provider resolution inside
-    the engine is a registry lookup over already-constructed adapters.
+    No network call occurs. The Loader reads the filesystem, the audit store
+    opens a local database, the Resolver and Validator are pure over in-memory
+    structures, and provider resolution inside the engine is a registry lookup
+    over already-constructed adapters.
     """
+    audit_database = os.environ.get("ORBITLANCE_AUDIT_DB")
+    if not audit_database:
+        raise AuditStoreNotConfiguredError(
+            "no durable audit database is configured; set ORBITLANCE_AUDIT_DB to "
+            "the path this deployment's audit records should be written to. "
+            "Specification 15.2 makes persisting audit events a responsibility, "
+            "so an engine is not built without one, and no default location is "
+            "guessed on a deployment's behalf."
+        )
+
     project = ProjectLoader(FilesystemProjectSource(projects_root)).load(project_id)
     resolved_context = Resolver().resolve(core, project)
     validation = Validator(provider_registry=providers).validate_project(project, core)
@@ -128,5 +173,5 @@ def activate(
         router=WorkflowRouter(),
         states=WorkflowStateManager(),
         tools=ToolExecutor(),
-        audit=AuditLogger(InMemoryAuditLogStore()),
+        audit=AuditLogger(SqliteAuditLogStore(audit_database)),
     )

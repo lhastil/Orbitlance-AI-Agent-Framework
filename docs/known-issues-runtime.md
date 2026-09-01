@@ -12,9 +12,11 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Thirteen open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
-RE-3, RE-4, RE-5, AUDIT-6, OB-1, OB-3**, recorded during Modules 10, 11, 14 and
-15, and the §14 post-implementation audit. None blocks the module it was found in; each needs a
+**Twelve open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
+RE-3, RE-4, RE-5, AUDIT-6, OB-3**, recorded during Modules 10, 11, 14 and 15,
+and the §14 post-implementation audit. **OB-1 closed on 2026-09-01** when the
+production path was wired to a durable SQLite audit store and proven end to end;
+**RE-4 stays open** because its monitoring half is OB-3, which does not. None blocks the module it was found in; each needs a
 system-owner decision because closing it means ruling between frozen clauses,
 supplying a policy the framework does not define, or amending a frozen artifact.
 
@@ -96,7 +98,7 @@ one class.
 | **AUDIT-5** | **Channel semantics after the first turn** | **Documentation / Reporting** |
 | **AUDIT-6** | **A degraded turn always returns `escalate=False`** | **Architecture Issue** |
 | **AUDIT-7** | **`RuntimeEngine` inspection surface beyond §14.6** | **Documentation / Reporting** |
-| **OB-1** | **Durable adapter exists; the production path is still in-memory (§15.8 partial)** | **Architecture Issue** |
+| **OB-1** | **Durable audit persistence** | **Closed** — production path wired to SQLite |
 | **OB-2** | **§15.12(d) duplicate-ID scenario cannot arise; not faked** | **Documentation / Reporting** |
 | **OB-3** | **§15.9 audit-gap alert has no seam** | **Architecture Issue** |
 | **PA-4** | **§4 cites an assembly order in a section that does not exist** | **Documentation / Reporting** |
@@ -1547,6 +1549,38 @@ have required creating files outside the authorized scope.
 
 ---
 
+#### Amendment, 2026-09-01 — the audit trail moved to logical isolation
+
+OB-1's production wiring changed **what isolates the audit trail**, and the
+change is a genuine weakening of the mechanism. It is recorded here rather than
+absorbed silently.
+
+| | Before | After |
+|---|---|---|
+| **Audit trail** | one `InMemoryAuditLogStore` per activation → **structural** isolation: no shared object existed through which two activations could meet | one shared SQLite database (`ORBITLANCE_AUDIT_DB`) → **logical** isolation, enforced by `project_id` filtering |
+| **Sessions** | per-activation `SessionManager` → structural | **unchanged — still structural** |
+| **Workflow state** | per-activation `WorkflowStateManager` → structural | **unchanged — still structural** |
+
+**What still holds for the audit trail:** `project_id` is on every `AuditEvent`
+and is one of the three query filters; `AuditFilters.matches` ANDs the supplied
+filters, so a `project_id` query never returns another project's rows.
+`test_activations_share_one_backing_store_with_logical_isolation` proves the
+four properties directly — separate logger and store objects per activation, one
+shared database beneath them, no cross-project rows from a filtered query, and
+`project_id` as the boundary.
+
+**What no longer holds:** the audit records of two projects now coexist in one
+file. A caller that queries **without** a `project_id` filter sees every
+project's events. That is a filter discipline, not a structural guarantee, and
+this entry does not claim otherwise.
+
+**AUDIT-2's core finding is unaffected.** It concerns conversation
+contamination through shared session and workflow stores, and those remain
+per-activation. Nothing about the audit change makes one project's *conversation*
+reachable from another.
+
+---
+
 ### AUDIT-3 — `transition_history` grows with no-op entries
 
 **Severity: Low** · **Class: Runtime Improvement** · **Owner: Module 6/7** ·
@@ -1826,6 +1860,57 @@ is no configuration mechanism in this repository to supply it.
 
 ---
 
+#### ✅ **RESOLVED 2026-09-01 — the production path is wired to the durable store**
+
+`activate()` now reads **`ORBITLANCE_AUDIT_DB`** and constructs
+`AuditLogger(SqliteAuditLogStore(path))`. `InMemoryAuditLogStore` is no longer
+on the production path; it remains `AuditLogger`'s default and the test store.
+
+**§15.2's "persist them" and §15.8's "durable" are now met on the production
+path**, and OB-1 closes — but only on what was actually proven:
+
+* `test_a_request_through_activate_is_durably_recorded` runs a real request
+  through `activate()`, destroys the engine, and reads the event back through a
+  **newly constructed** store over the same path. That is the ruled definition
+  of durable, demonstrated end to end rather than asserted;
+* `test_the_production_path_uses_the_durable_store` pins the wiring;
+* `test_activation_wires_the_adapter_and_no_longer_the_in_memory_store` pins it
+  structurally.
+
+**Configuration.** `activate()`'s signature is unchanged at four arguments; the
+environment variable **is** the deployment-level configuration, because this
+repository has no settings object, config file or CLI. **There is no default
+path**: an absent or empty variable raises `AuditStoreNotConfiguredError`, so a
+deployment is told its audit configuration is missing rather than having
+customer-linked records written somewhere nobody chose.
+
+**New activation-time failure mode**, deliberate and recorded:
+
+| Cause | Raised |
+|---|---|
+| `ORBITLANCE_AUDIT_DB` absent or empty | `AuditStoreNotConfiguredError` (a `ValueError`, checked first, before anything is loaded) |
+| Variable set, path unusable | `SqliteAuditLogStoreError`, propagating unchanged from the adapter, which already names the path and the reason |
+
+A runtime that cannot keep a durable audit trail no longer starts. That is a
+behaviour change for any caller of `activate()`, and it is intentional.
+
+**Post-activation containment is unchanged.** `RuntimeEngine._observe` still
+wraps the write in `try/except Exception: return`; a failing store cannot alter
+`RuntimeResponse`, trigger escalation or degrade a turn —
+`test_a_write_failure_after_activation_leaves_the_response_identical` corrupts
+the database *after* activation and asserts a byte-identical response.
+
+**Still out of scope, and still not claimed:** retention (records kept
+indefinitely), access control (host filesystem only), corrupt-record recovery,
+thread safety, and multi-process safety. **RE-3 preserved; V-7 not triggered** —
+no lock, thread, async surface or pool was introduced.
+
+**What this does *not* close:** **OB-3 remains open** — a store that fails after
+activation is still silent, because §15.9's alert/metric has no seam. **RE-4
+therefore also remains open**; only its durability half is resolved.
+
+---
+
 ### OB-2 — §15.12(d)'s duplicate-ID scenario cannot arise, and is not faked
 
 **Class: Documentation / Reporting** · Consequence of the ruled identity model.
@@ -1894,6 +1979,18 @@ keeps a queryable trail.
 the process (**OB-1**), and a failing store is still silent (**OB-3**). The
 entry is not closed, because "keeps an audit trail" and "keeps a durable,
 monitored audit trail" are different claims.
+
+**Update, 2026-09-01 — the durability half is resolved; RE-4 stays open.**
+OB-1's production wiring means `activate()` now builds a `SqliteAuditLogStore`
+over `ORBITLANCE_AUDIT_DB`, so the trail survives the process and is readable
+afterwards.
+
+**RE-4 does not close, because OB-3 does not.** §15.9 has two halves — the
+conversation must not be blocked (satisfied, and now proven against a durable
+store), and *"it must raise its own alert/metric, since a silent audit-logging
+gap is itself a Compliance risk"* (unsatisfied; no metrics seam exists). A
+durable store that fails after activation is still silent, which is exactly the
+risk the clause names. **"Durable" is now true; "monitored" is not.**
 
 ---
 

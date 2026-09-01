@@ -1,6 +1,7 @@
 """Runtime Engine construction failures.
 
-Exactly one class, and only construction-time.
+Two classes, both construction-time: a project that has not passed validation,
+and a deployment with no durable audit database configured.
 
 **No repository-wide exception base is introduced.** The runtime holds 51
 exception classes across twelve unrelated hierarchies, and unifying them would
@@ -14,6 +15,31 @@ per-turn outcome is a `RuntimeResponse`.
 """
 
 from __future__ import annotations
+
+
+class AuditStoreNotConfiguredError(ValueError):
+    """No durable audit database was configured for the deployment.
+
+    §15.2 makes persisting audit events a **responsibility**, not an optional
+    extra, so the production path depends on a durable store being reachable.
+    `activate` therefore reads `ORBITLANCE_AUDIT_DB` and refuses to build an
+    engine when it is absent: a runtime that serves traffic while silently
+    keeping no durable audit trail is the Compliance risk §15.9 names, and
+    failing at deployment time is the honest place to surface it.
+
+    **Absence only.** If the variable is set but the path cannot be opened,
+    created or initialised, the adapter's own `SqliteAuditLogStoreError`
+    propagates unchanged — that is a different fault, it already carries the
+    path and the underlying reason, and wrapping it here would hide both.
+
+    **No default path is invented.** Choosing where a deployment's audit records
+    live is a deployment decision; guessing one would put durable customer-linked
+    records somewhere nobody chose.
+
+    A `ValueError` rather than a member of any module's error family, matching
+    `ProjectNotActivatedError` below: both are assembly-time misconfigurations
+    raised before any conversation exists, and neither is a per-turn outcome.
+    """
 
 
 class ProjectNotActivatedError(ValueError):

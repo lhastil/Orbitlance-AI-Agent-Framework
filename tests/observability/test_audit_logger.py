@@ -526,6 +526,20 @@ def test_the_logger_holds_no_module_level_state() -> None:
 # =============================================================================
 # production wiring
 # =============================================================================
+@pytest.fixture(autouse=True)
+def audit_database(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> pathlib.Path:
+    """Every `activate()` needs `ORBITLANCE_AUDIT_DB` (R-2), and gets its own.
+
+    The composition root fails fast without it, by design — a deployment that
+    keeps no durable audit trail must not start. Each test therefore points the
+    variable at its own temporary database, so nothing is shared between tests
+    and nothing is written outside `tmp_path`.
+    """
+    path = tmp_path / "activation-audit.sqlite3"
+    monkeypatch.setenv("ORBITLANCE_AUDIT_DB", str(path))
+    return path
+
+
 @pytest.fixture(scope="module")
 def core() -> CoreBundle:
     return CoreLoader(FilesystemCoreSource(REPO_ROOT / "core")).get_core_bundle()
@@ -551,14 +565,53 @@ def test_activation_produces_a_working_audit_log(core: CoreBundle) -> None:
     assert logged[0].event_id and logged[0].timestamp
 
 
-def test_each_activation_gets_its_own_audit_log(core: CoreBundle) -> None:
-    """No shared store, no singleton — the same rule as sessions and workflows."""
+def test_activations_share_one_backing_store_with_logical_isolation(
+    core: CoreBundle,
+) -> None:
+    """OB-1 changed what isolates the audit trail. This records the change.
+
+    **Before:** each activation got its own `InMemoryAuditLogStore`, so one
+    activation could not see another's events **structurally** — there was no
+    shared object through which they could meet.
+
+    **Now:** every activation opens a `SqliteAuditLogStore` over the one
+    database `ORBITLANCE_AUDIT_DB` names, so the events do coexist, and
+    isolation is **logical** — enforced by `project_id` filtering rather than by
+    separate storage. That is a real weakening of the mechanism and is recorded
+    as such in AUDIT-2; this test is what keeps the remaining guarantee honest.
+
+    Session and workflow isolation are untouched and remain structural — see
+    `tests/runtime_engine/test_colliding_conversation_ids_stay_isolated_across_activations`.
+
+    The four properties R-3 requires, in order:
+    """
     first, second = activated(core), activated(core)
+
+    # 1. separate logger and store objects still exist per activation
     assert first._audit is not second._audit  # noqa: SLF001
+    assert first._audit._store is not second._audit._store  # noqa: SLF001
+
+    # 2. ...but they address the same physical SQLite backing
+    assert (
+        first._audit._store.database_path  # noqa: SLF001
+        == second._audit._store.database_path  # noqa: SLF001
+    )
 
     first.handle_request(RuntimeRequest(FIXTURE_ID, "shared-id", "to the first", "web"))
-    assert len(first._audit.query_audit_log(AuditFilters())) == 1  # noqa: SLF001
-    assert second._audit.query_audit_log(AuditFilters()) == ()  # noqa: SLF001
+    assert len(second._audit.query_audit_log(AuditFilters())) == 1  # noqa: SLF001
+
+    # 3. project A's events are never returned by a project B query
+    other_project = second._audit.query_audit_log(  # noqa: SLF001
+        AuditFilters(project_id="a_different_project")
+    )
+    assert other_project == ()
+
+    # 4. project_id is the isolation boundary
+    same_project = second._audit.query_audit_log(  # noqa: SLF001
+        AuditFilters(project_id=FIXTURE_ID)
+    )
+    assert len(same_project) == 1
+    assert all(e.project_id == FIXTURE_ID for e in same_project)
 
 
 def test_blocked_and_degraded_turns_are_recorded(core: CoreBundle) -> None:
