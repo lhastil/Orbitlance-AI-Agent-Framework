@@ -12,9 +12,13 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Ten open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
-RE-3, RE-5, AUDIT-6**, recorded during Modules 10, 11, 14 and 15,
-and the §14 post-implementation audit. **OB-1 closed on 2026-09-01** when the
+**Twelve open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
+RE-3, RE-5, AUDIT-6, WR-1, GE-1**, recorded during Modules 10, 11, 14 and 15,
+the §14 post-implementation audit, and the Step 4 roadmap audit of 2026-09-05.
+**WR-1 and GE-1 are not new defects** — both were disclosed in source and in
+README from their own module milestones, and both are pinned by tests; what they
+lacked until 2026-09-05 was a register identifier, an owner and a closure
+criterion. **OB-1 closed on 2026-09-01** when the
 production path was wired to a durable SQLite audit store and proven end to end;
 **OB-3 closed on 2026-09-01** when §15.9's audit-gap alert was implemented at the
 Runtime Engine's containment guard; **RE-4 closed on 2026-09-01** under the
@@ -103,6 +107,8 @@ one class.
 | **OB-1** | **Durable audit persistence** | **Closed** — production path wired to SQLite |
 | **OB-2** | **§15.12(d) duplicate-ID scenario cannot arise; not faked** | **Documentation / Reporting** |
 | **OB-3** | **§15.9 audit-gap alert has no seam** | **Closed** — alert raised at §14's containment guard |
+| **WR-1** | **§6.2's message-driven routing is not implemented; no conversation advances past its first workflow** | **Architecture Issue** |
+| **GE-1** | **§8.2's pre-flight content scan is not implemented; no inbound message is checked** | **Architecture Issue** |
 | **PA-4** | **§4 cites an assembly order in a section that does not exist** | **Documentation / Reporting** |
 | **PA-5** | **Playbook provenance check inspected only the first source** | **Closed** |
 | **PA-6** | **Runtime provenance cannot prove content origin** | **Documentation / Reporting** |
@@ -2130,6 +2136,140 @@ replaced rather than extended."* The Runtime Engine now depends on
 `runtime.observability.AuditLog` and owns no audit semantics: it builds an event
 from the turn's outcome, hands it over, and contains any failure. It does not
 generate identity, timestamp, store, query, filter, or decide retention.
+
+---
+
+## Registered during the Step 4 roadmap audit, 2026-09-05
+
+Two frozen-specification gaps that had **no register identifier**. Neither is a
+newly discovered defect: both were disclosed in their module's source docstring
+and in README's module table from their own milestone, and both are pinned by
+tests written to fail the day the gap closes. What each lacked was an
+identifier, an owner and a stated closure criterion — which is what this section
+supplies, and nothing more. **No ruling is made here.**
+
+They share one root — the framework's Core content is prose written for a human
+or a model, not conditions a program can evaluate — but they are separate
+issues in separate modules with separate closure routes.
+
+---
+
+### WR-1 — §6.2's message-driven routing is not implemented; no conversation advances past its first workflow
+
+**Class: Architecture Issue** · Ruling D-4 deferred the provider path; this entry
+registers the consequence, which had no identifier until 2026-09-05.
+
+§6.2 requires the Router to consult each workflow's Trigger/Decision Point rules
+*"against the current state **and latest message**"*. `route()` accepts
+`latest_message` — it is in the frozen §6.6 signature — and immediately discards
+it: `del latest_message`.
+
+**What is implemented is genuinely deterministic, and it is two rules.** R-1: a
+new conversation routes to the first-turn workflow, which `discovery.md`'s own
+Trigger names (*"A new conversation begins"*). R-2: otherwise stay put, which is
+§6.9 verbatim (*"Ambiguous input with no clear signal → default to remaining in
+the current workflow"*). With no evaluable transition rule available, **every**
+input is ambiguous by that definition.
+
+**Why no third rule exists.** Five of the six workflows define a Decision Point
+and every one turns on a judgement rather than a checkable condition — *"If
+sufficient information has been collected"*, *"If the customer accepts the
+recommendation"*, *"If the customer confirms the information"*, *"If the customer
+responds"*, *"If synchronization succeeds"*. Inventing keyword heuristics would
+make `router.py` the framework's routing semantics, resting on nothing in the
+specification.
+
+**The consequence, stated plainly: this router never advances a conversation
+past its first workflow**, and **§6.12(a)** — *"a clear Discovery→Recommendation
+trigger routes correctly"* — is a frozen test scenario that cannot be written
+against the committed Core content. It is not faked.
+
+**§6.3 pre-authorises one of the two closure routes**, and that is why this is a
+ruling and not an implementation task: *"an LLM-based classification only as a
+secondary signal for genuinely ambiguous cases"*, with an explicit cost/latency
+warning that *"an LLM call on every routing decision taxes every turn"*.
+
+**Partially dependent on TE-5 / TE-1.** Two of the five judgement conditions are
+tool-shaped — `crm_sync`'s *"If synchronization succeeds"* needs a tool result
+`route()` is not given, and Triggers such as *"A consultation request is
+submitted"* name events it cannot observe. The other three are purely
+conversational and closable without any tool work.
+
+**To close it:** a ruling between (a) machine-readable Trigger/Decision Point
+rules authored in `core/workflows/` — which amends frozen content — and (b) the
+provider-backed ambiguous-case classification §6.3/§6.7 permit; then at least one
+real transition satisfying §6.12(a), with §6.9's conservative default preserved.
+
+**Related:** **TE-5** — a related partial dependency, not the same issue: two of
+the five conditions need a tool result. **TE-3** — a thematic relationship only,
+sharing the prose-is-not-machine-readable root with no dependency between them.
+**GE-1** — same root, different module, independent ruling.
+
+Pinned by `test_no_machine_checkable_transition_rule_exists_in_core`,
+`test_the_router_documents_that_it_cannot_advance_a_conversation`,
+`test_no_message_content_changes_the_outcome` and
+`test_an_active_workflow_is_retained`.
+
+---
+
+### GE-1 — §8.2's pre-flight content scan is not implemented; no inbound message is checked
+
+**Severity: High** · **Class: Architecture Issue** · **Owner: Module 8 /
+Guardrail Engine.** Registered 2026-09-05; the behaviour was disclosed in source
+and in README from the Module 8 milestone but carried no identifier.
+
+§8.2 requires a *"cheap heuristic scan of the incoming message for conditions
+requiring immediate block/escalation, before any LLM call is made."*
+`check_pre_flight` discards both of its §8.4 inputs: `del message,
+resolved_context`. It verifies that the Core guardrails bundle is intact and
+fails closed on internal error, and that is all.
+
+**The post-response half of §8.2 is real and is not affected by this entry.**
+`core.safety.unsupported_price` blocks a price absent from the project's
+resolved Knowledge — the clause's own verbatim example, tested by §8.12(b).
+
+**Why no content rule exists.** All ten of `escalation.md`'s Automatic
+Escalation Conditions are semantic, and are published as
+`UNENFORCED_CORE_CONDITIONS` precisely so coverage is never inferred from the
+fact that the Engine returned a result. A keyword list *"would become this
+framework's safety semantics on no authority, and would fail in both directions:
+missing real escalations while blocking innocent messages."* Every project
+Operating Constraint is likewise semantic; §8.11 records structured constraints
+as the intended remedy and that mechanism does not exist.
+
+**§8.2 does not require all ten.** It says *"conditions requiring immediate
+block/escalation"*, qualified as a *cheap heuristic* — so a narrower, justified
+selection satisfies the clause. *"The customer explicitly requests a human
+representative"* and *"requests a manager or supervisor"* are materially more
+tractable than *"Security concerns are detected"*. This is closable
+incrementally.
+
+**§8.12(a)** — *"pre-flight blocks an automatic-escalation-condition message
+without any Provider call being made"* — is a frozen test scenario that cannot
+currently be written, and is deliberately not faked. §8.12(c) is unmet for the
+same reason.
+
+**Relationship to AUDIT-6.** AUDIT-6 concerns *"Technical issues exceed the AI's
+capabilities"* — item ten of the same tuple — and already names Module 8 as its
+owner. It is a **single-condition instance** of this entry and is kept separate:
+it asks a narrower question that can be answered independently.
+
+**To close it:** a ruling naming which Automatic Escalation Conditions receive
+deterministic evaluators and on what authority, and what false-positive rate is
+acceptable when the outcome is blocking a customer; then at least one real
+pre-flight block satisfying §8.12(a) with the Provider proven un-invoked,
+`UNENFORCED_CORE_CONDITIONS` shrunk to the genuine remainder, and §8.9's
+fail-closed and §8.10's reason/attribution behaviour preserved. Project
+Operating Constraints (§8.12(c), §8.11) remain separate future work.
+
+**Related:** **AUDIT-6** — a narrower single-condition issue covering item ten;
+do not merge. **RE-5** — detection versus the wording a blocked customer reads,
+which §8.3 makes explicitly not this module's job: separate and sequenced, since
+more blocking makes RE-5's absent wording more visible. **WR-1** — same root,
+different module, independent ruling.
+
+Pinned by `UNENFORCED_CORE_CONDITIONS` and the §8.12(a)/(c)
+non-implementability tests in `tests/guardrail/test_guardrail_engine.py`.
 
 ---
 
