@@ -56,6 +56,44 @@ These conditions are universal and apply to every project regardless of industry
 
 ---
 
+## Escalation Trigger Phrases
+
+**This section is the authoritative source of the runtime's deterministic escalation vocabulary.** The Guardrail Engine reads the phrases below from this document; it never defines them in code. Adding, removing or rewording a phrase here changes framework safety behaviour, and is a deliberate Core-content change.
+
+Only the **first two** Automatic Escalation Conditions have a vocabulary. The remaining eight are semantic judgements with no authoritative deterministic form, and the runtime does not attempt them — an approximation would become framework safety policy resting on nothing.
+
+A message containing one of these phrases **escalates but is never blocked**. The customer is asking for a person, which is a handoff request, not a reason to refuse service. A phrase matched in error therefore costs an unnecessary handoff, never a refused customer.
+
+Each subsection heading below is the condition it serves, worded identically to the list above so the two cannot drift apart.
+
+### The customer explicitly requests a human representative
+
+- speak to a human
+- talk to a human
+- speak with a human
+- speak to a person
+- talk to a person
+- speak with a person
+- speak to a real person
+- talk to a real person
+- human representative
+- human agent
+- live agent
+- real person
+
+### The customer requests a manager or supervisor
+
+- speak to a manager
+- talk to a manager
+- speak with a manager
+- speak to a supervisor
+- talk to a supervisor
+- speak with a supervisor
+- your manager
+- your supervisor
+
+---
+
 ## Recommended Escalation Conditions
 
 Escalation should be considered when:

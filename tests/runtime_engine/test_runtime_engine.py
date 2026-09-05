@@ -59,6 +59,7 @@ from runtime.runtime_engine import (
     RuntimeEngine,
     activate,
 )
+from runtime.runtime_engine.stages import TurnState
 from runtime.session import SessionManager
 from runtime.tool_executor import ToolExecutor
 from runtime.validation import Validator
@@ -1421,6 +1422,104 @@ def test_the_engine_package_depends_only_downward() -> None:
             ):
                 package = ".".join(node.module.split(".")[:2])
                 assert package in allowed, f"{path.name} imports {node.module}"
+
+
+# =============================================================================
+# GE-1 — a pre-flight escalation survives to the RuntimeResponse
+# =============================================================================
+#: Published by `core/guardrails/escalation.md`. Read from the document rather
+#: than written here, so this suite cannot drift from the Core vocabulary the
+#: Engine actually enforces.
+def escalating_message() -> str:
+    escalation = (
+        REPO_ROOT / "core" / "guardrails" / "escalation.md"
+    ).read_text(encoding="utf-8")
+    section = escalation.split(
+        "### The customer requests a manager or supervisor\n", 1
+    )[1].split("\n#", 1)[0]
+    phrase = next(
+        line[2:].strip() for line in section.splitlines() if line.startswith("- ")
+    )
+    return f"Hello, I would like to {phrase} about my appointment."
+
+
+def test_ge1_a_pre_flight_escalation_reaches_the_runtime_response(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """The one §14 change GE-1 authorizes.
+
+    Before it, `DeliveryStage` read only `post_response.escalate`, so a
+    pre-flight escalation on a turn that was not blocked was silently dropped.
+    """
+    engine, _, _ = build_engine(core, fixture_context)
+    response = engine.handle_request(request(escalating_message()))
+
+    assert response.escalate, "the pre-flight escalation was lost before delivery"
+    assert not response.blocked
+    assert not response.degraded
+    assert response.text == ANSWER
+
+
+def test_ge1_the_escalating_turn_still_answers_the_customer(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """Escalate is not block: the customer is handed off *and* answered.
+
+    The provider is invoked exactly once — proof the turn ran to completion
+    rather than short-circuiting the way a blocked turn does.
+    """
+    engine, adapter, _ = build_engine(core, fixture_context)
+    response = engine.handle_request(request(escalating_message()))
+
+    assert len(adapter.calls) == 1
+    assert response.text == ANSWER
+    assert response.escalate and not response.blocked
+
+
+def test_ge1_the_pre_flight_verdict_precedes_any_provider_call(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """§8.2: the scan happens *before any LLM call is made*.
+
+    Asserted at the moment the guardrail stage runs, not inferred from the end
+    state: the pre-flight stage is executed directly and the adapter's call log
+    is checked while the rest of the pipeline has not yet run.
+    """
+    engine, adapter, _ = build_engine(core, fixture_context)
+    pipeline = engine._pipeline  # noqa: SLF001 - asserting stage ordering
+    state = TurnState(request=request(escalating_message()))
+
+    for stage in pipeline:
+        stage.run(state)
+        if stage.name == "pre_flight_guardrail":
+            break
+
+    assert state.pre_flight is not None
+    assert state.pre_flight.escalate
+    assert adapter.calls == [], "a provider was called before the pre-flight verdict"
+
+
+def test_ge1_an_ordinary_turn_does_not_escalate(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """The floor: no spurious escalation on a normal request."""
+    engine, _, _ = build_engine(core, fixture_context)
+    response = engine.handle_request(request("What do you offer?"))
+    assert not response.escalate
+    assert not response.blocked
+
+
+def test_ge1_delivery_reads_both_checkpoints_not_only_the_second() -> None:
+    """Structural: the authorized change, and no more of it.
+
+    `DeliveryStage` must consider the pre-flight verdict. It must not acquire
+    any other escalation policy — AUDIT-6 (should a degraded turn escalate?)
+    stays open, so nothing here may consult `degraded`.
+    """
+    source = (PACKAGE / "stages.py").read_text(encoding="utf-8")
+    delivery = source.split("class DeliveryStage")[1].split("\ndef ")[0]
+    assert "state.pre_flight" in delivery
+    assert "state.post_response" in delivery
 
 
 # =============================================================================

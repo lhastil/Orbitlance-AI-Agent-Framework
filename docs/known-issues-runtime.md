@@ -12,8 +12,8 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Twelve open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
-RE-3, RE-5, AUDIT-6, WR-1, GE-1**, recorded during Modules 10, 11, 14 and 15,
+**Eleven open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
+RE-3, RE-5, AUDIT-6, WR-1**, recorded during Modules 10, 11, 14 and 15,
 the §14 post-implementation audit, and the Step 4 roadmap audit of 2026-09-05.
 **WR-1 and GE-1 are not new defects** — both were disclosed in source and in
 README from their own module milestones, and both are pinned by tests; what they
@@ -108,7 +108,7 @@ one class.
 | **OB-2** | **§15.12(d) duplicate-ID scenario cannot arise; not faked** | **Documentation / Reporting** |
 | **OB-3** | **§15.9 audit-gap alert has no seam** | **Closed** — alert raised at §14's containment guard |
 | **WR-1** | **§6.2's message-driven routing is not implemented; no conversation advances past its first workflow** | **Architecture Issue** |
-| **GE-1** | **§8.2's pre-flight content scan is not implemented; no inbound message is checked** | **Architecture Issue** |
+| **GE-1** | **§8.2's pre-flight content scan is not implemented; no inbound message is checked** | **Closed** — two conditions enforced from Core vocabulary |
 | **PA-4** | **§4 cites an assembly order in a section that does not exist** | **Documentation / Reporting** |
 | **PA-5** | **Playbook provenance check inspected only the first source** | **Closed** |
 | **PA-6** | **Runtime provenance cannot prove content origin** | **Documentation / Reporting** |
@@ -2217,6 +2217,8 @@ Pinned by `test_no_machine_checkable_transition_rule_exists_in_core`,
 **Severity: High** · **Class: Architecture Issue** · **Owner: Module 8 /
 Guardrail Engine.** Registered 2026-09-05; the behaviour was disclosed in source
 and in README from the Module 8 milestone but carried no identifier.
+✅ **CLOSED 2026-09-05** — see the closure note after the ruling below. The
+description that follows is the state as registered, retained for history.
 
 §8.2 requires a *"cheap heuristic scan of the incoming message for conditions
 requiring immediate block/escalation, before any LLM call is made."*
@@ -2270,6 +2272,136 @@ different module, independent ruling.
 
 Pinned by `UNENFORCED_CORE_CONDITIONS` and the §8.12(a)/(c)
 non-implementability tests in `tests/guardrail/test_guardrail_engine.py`.
+
+---
+
+### Ruling, 2026-09-05 — GE-1's pre-flight scope and where its authority lives
+
+**Accepted architectural ruling:**
+
+> **§8.2's pre-flight scan is satisfied by a narrow deterministic subset whose
+> trigger vocabulary is Core content, not by broad heuristics invented in
+> `runtime/`.**
+
+**Ratified, not yet implemented.** This section records the decision; the
+behaviour it authorizes does not exist yet. **GE-1 stays open until the closure
+criteria below are met**, and `UNENFORCED_CORE_CONDITIONS` remains at **ten**
+entries until implementation is separately authorized.
+
+| | |
+|---|---|
+| **Strategy** | Narrow deterministic subset. A cheap deterministic evaluation runs at pre-flight, before any Provider call — satisfying §8.2 and making §8.12(a) writable — **without** attempting all ten Automatic Escalation Conditions |
+| **In scope** | **Exactly two** conditions: *"The customer explicitly requests a human representative"* and *"The customer requests a manager or supervisor."* The set is not to be silently expanded |
+| **Out of scope** | Conditions 3–10 remain **explicitly unenforced** for pre-flight purposes |
+
+**Where the authority lives — the substance of this ruling.** The trigger
+vocabulary for the two conditions is **Core content**, authored in
+`core/guardrails/escalation.md`. `runtime/guardrail/engine.py` may transcribe
+that committed definition under the repository's existing transcription
+discipline — the same discipline `PRICE_PATTERN` follows — but **must never
+become the authoritative source of the safety policy**. Any new trigger
+vocabulary is therefore a frozen Core-content change, and Core/Project
+separation is preserved: safety semantics stay in `core/`, never in Python.
+
+**No Provider at pre-flight.** Provider-backed semantic classification is
+**refused** at this checkpoint and Module 8 remains provider-independent. §6.3's
+secondary-classification permission is **Module 6-specific and does not
+transfer**. §8.8's post-response sampled/async guardrail judge remains the
+authorized location for any future semantic or provider-backed evaluation. **No
+Provider call may occur as part of GE-1 pre-flight.**
+
+**Escalate, do not block.** A match on either condition produces
+**`escalate=True`, `blocked=False`**. The customer is requesting human
+assistance; that is a handoff request, not a reason to refuse service. The
+false-positive posture is deliberately conservative in this direction: a wrong
+match costs an unnecessary escalation signal, never a refused customer. **These
+conditions must not be converted into automatic blocking.**
+
+**One companion §14 change is authorized, and only one.** The chosen semantics
+are not currently representable: `PreFlightGuardrailStage` reads
+`result.escalate` only when `result.blocked` is true, and the delivery stage
+reads only `state.post_response.escalate` — so a pre-flight escalation on a
+passing turn is silently dropped. **`pre_flight.escalate` must survive to the
+final `RuntimeResponse`.** No other §14 behaviour is to be added.
+
+**What this ruling does not decide:**
+
+* **AUDIT-6 remains open.** Condition 10, *"Technical issues exceed the AI's
+  capabilities"*, is a post-failure runtime condition, not a property of an
+  inbound message, and is outside the evaluator set. It needs its own §14
+  degradation/escalation ruling.
+* **Project Operating Constraints remain out of scope.** No `project.*`
+  evaluators, `UNENFORCED_PROJECT_CONSTRAINTS` unchanged, and **no claim on
+  §8.11 or §8.12(c)**. A separate issue for that gap is not registered by this
+  ruling.
+* **RE-5 remains open.** Composing what a customer reads is §8.3's excluded
+  responsibility and Module 14's concern. The order relationship stands: more
+  active escalation makes RE-5's absent wording more visible.
+
+**Boundaries preserved:** Core/Project separation · Module 8 provider
+independence · §8.2's cheap pre-flight semantics · §8.9 fail-closed · §8.10
+reason and `core.*` attribution · §8.3's responsibility boundary · §6.3 as a
+Module 6 permission · §8.8 as the authorized venue for future post-response
+semantic judging.
+
+**GE-1 may close only when all of these hold:** authoritative Core vocabulary
+exists for the two conditions; pre-flight evaluates them before any Provider
+call; a real matching message yields `escalate=True` with `blocked=False`; that
+flag survives to `RuntimeResponse`; no Provider call precedes the decision;
+reason and `core.*` attribution are preserved; `UNENFORCED_CORE_CONDITIONS`
+contains exactly the remaining **eight**; §8.9's fail-closed behaviour is
+intact; project constraints remain explicitly unenforced; AUDIT-6 and RE-5
+remain open; and the full regression suite passes.
+
+---
+
+#### ✅ **RESOLVED 2026-09-05 — GE-1 implemented exactly as ruled**
+
+`escalation.md` now carries an **"Escalation Trigger Phrases"** section stating
+that it is the authoritative source, with one subsection per condition, worded
+identically to the condition it serves. `check_pre_flight` looks the phrases up
+through `ESCALATION_VOCABULARY_SECTIONS` and matches them case-insensitively.
+
+**The vocabulary is derived, not transcribed** — a stronger reading of the
+ruling than transcription, and the one that makes Core authoritative in fact
+rather than by convention. The Engine reads the section per call, so editing
+`escalation.md` changes behaviour with no Python to keep in step.
+`test_ge1_the_engine_follows_core_when_core_changes` proves it by substituting a
+document with a different phrase and observing the Engine follow it;
+`test_ge1_the_vocabulary_is_core_content_not_python` proves no phrase is written
+in `engine.py`. Module 8 imports nothing new — the `CoreBundle` was already
+injected, and the Core Loader already provides section-addressable access, so
+§8.7's dependency set is unchanged and no markdown helper was imported.
+
+**Semantics as ruled:** `escalate=True`, `blocked=False`, a reason naming the
+matched phrase and the Core condition, and `core.escalation.*` attribution
+resolving to `GuardrailOrigin.CORE`. Every phrase Core publishes is exercised,
+not a sample.
+
+**§14 plumbing, the one authorized change:** `DeliveryStage` now takes the union
+of both checkpoints' `escalate` flags. Nothing else about §14 changed; a
+structural test pins that the stage consults the two verdicts and acquires no
+other escalation policy.
+
+**Fail-closed extension, recorded because it is a judgment call.** A missing
+phrase list raises, which §8.9's guard turns into a blocked, escalating
+`engine.internal_failure`. `escalation.md` could otherwise exist, be non-empty,
+pass the bundle-integrity check, and leave the Engine silently enforcing
+nothing — the no-op §8.9 forbids. The blast radius is deliberate and matches the
+existing posture for an incomplete bundle.
+
+**`UNENFORCED_CORE_CONDITIONS` moved 10 → 8.** The two enforced conditions left
+it; the eight remaining are still asserted verbatim against `escalation.md`.
+`UNENFORCED_PROJECT_CONSTRAINTS` is untouched and **no `project.*` rule exists**.
+
+**Unchanged and still open:** **AUDIT-6** (condition ten is a post-failure
+question for §14), **RE-5** (§8.3 keeps composing the customer's wording outside
+this module), **WR-1**, and every other issue. §8.12(c) remains unimplementable.
+
+Proven by fifteen tests across `tests/guardrail/` and `tests/runtime_engine/`.
+Two existing tests were **transformed, not deleted**: the 10-condition count
+narrowed to 8, and the "does not guess" test kept every case whose premise still
+holds while the two now-enforced messages moved to positive coverage.
 
 ---
 

@@ -364,6 +364,13 @@ class DeliveryStage:
     durable record. A response the customer never saw must not become an agent
     turn that the next prompt shows the model as delivered. §14 states no rule
     for this; the decision is recorded as RE-6.
+
+    **Escalation is the union of both checkpoints.** A pre-flight escalation
+    that does not block — a customer asking for a person — reaches this stage
+    with the turn still running, and would be lost if only the post-response
+    verdict were read. Authorized by GE-1's ruling (2026-09-05) as the one
+    §14 change that ruling requires; no other escalation policy is introduced
+    here, and whether an internal failure should escalate remains AUDIT-6.
     """
 
     __slots__ = ("_sessions", "name")
@@ -380,7 +387,10 @@ class DeliveryStage:
         )
         state.outcome = RuntimeResponse(
             text=text,
-            escalate=state.post_response is not None and state.post_response.escalate,
+            escalate=any(
+                verdict is not None and verdict.escalate
+                for verdict in (state.pre_flight, state.post_response)
+            ),
             degraded=bool(state.bundle is not None and state.bundle.degraded),
         )
 

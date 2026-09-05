@@ -30,6 +30,16 @@ refuses to approximate the rest:
 
 **Implemented (deterministic):**
 
+* **`core.escalation.human_representative_request`** and
+  **`core.escalation.manager_request`** — a pre-flight message asking for a
+  person escalates. **The vocabulary is not defined here.** It is read from
+  `escalation.md`'s *"Escalation Trigger Phrases"* section, which states that it
+  is the authoritative source; this module looks it up and matches, and would
+  enforce a different vocabulary tomorrow without being edited. That is the
+  whole point: safety semantics stay in `core/`, where the framework's other
+  safety content lives, and Python never becomes the authority for them.
+  These two escalate and **never block** — a customer asking for a human is
+  requesting a handoff, not a refusal of service (GE-1's ruling, 2026-09-05).
 * **`core.safety.unsupported_price`** — a price appearing in a response but
   absent from the project's resolved Knowledge is blocked. §8.2 names this
   example verbatim (*"a price not present in Knowledge"*) and §8.12(b) tests it.
@@ -44,24 +54,29 @@ refuses to approximate the rest:
 
 **Not implemented, and deliberately not approximated:**
 
-* **All ten of `escalation.md`'s Automatic Escalation Conditions.** Every one is
-  semantic — *"The customer explicitly requests a human representative"*, *"The
-  AI cannot confidently answer after clarification"*, *"Security concerns are
-  detected"*. Detecting them needs intent classification. A keyword list would
-  become this framework's safety semantics on no authority, and would fail in
-  both directions: missing real escalations while blocking innocent messages.
+* **Eight of `escalation.md`'s ten Automatic Escalation Conditions.** Every one
+  of the eight is semantic — *"The AI cannot confidently answer after
+  clarification"*, *"Security concerns are detected"*, *"Legal or contractual
+  discussions begin"*. Detecting them needs intent classification, and Core
+  publishes no vocabulary for them. A keyword list invented here would become
+  this framework's safety semantics on no authority, and would fail in both
+  directions: missing real escalations while blocking innocent messages. Two of
+  the eight are not pre-flight questions at all — *"cannot confidently answer
+  after clarification"* needs conversation history this checkpoint is not given
+  (§8.4), and *"Technical issues exceed the AI's capabilities"* is observable
+  only after a failure (**AUDIT-6**, which stays open).
 * **Every project Operating Constraint.** `sunrise_dental_clinic` carries five,
   and all five are semantic — including *"Never quote a price for treatment
   requiring an in-person exam"*, which needs to know which treatments require
   one. §8.11 records structured, machine-checkable constraints as the intended
   remedy; that mechanism does not exist yet and is future work.
 
-**The consequence, stated plainly: `check_pre_flight` currently has no content
-rule and will not block on message text.** It verifies the bundle and fails
-closed on internal error, and that is all. Calling that "guarded" would be the
-silent no-op §8.9 forbids, so it is named here, exposed through
-`UNENFORCED_CORE_CONDITIONS`, and asserted by tests instead of being hidden
-behind an interface that looks complete.
+**The consequence, stated plainly: `check_pre_flight` evaluates exactly two
+conditions and no others.** It verifies the bundle, matches Core's published
+escalation vocabulary, and fails closed on internal error. What it does not
+check remains named here, exposed through `UNENFORCED_CORE_CONDITIONS`, and
+asserted by tests, instead of being hidden behind an interface that looks
+complete.
 """
 
 from __future__ import annotations
@@ -109,13 +124,36 @@ PRICE_PATTERN: re.Pattern[str] = re.compile(
 #: may know, and a test in Module 4 fails if any other module names it.
 TRAILING_PUNCTUATION: str = ",."
 
+#: Where Core publishes the deterministic escalation vocabulary (GE-1, ruled
+#: 2026-09-05). **Addresses into a Core document, not the policy itself**: the
+#: phrases live in `escalation.md` and are read from it per call, so this module
+#: enforces whatever Core currently says and never becomes the authority for it.
+#: Each heading is worded identically to the condition it serves, which is what
+#: makes `core.*` attribution structural rather than hand-maintained.
+#:
+#: **Private.** §8.6 declares two members, and this is an implementation detail
+#: of how they find their policy — not a published declaration of coverage.
+#: `UNENFORCED_CORE_CONDITIONS` is that declaration, and is public for it.
+_ESCALATION_VOCABULARY_SECTIONS: tuple[tuple[str, str], ...] = (
+    (
+        "The customer explicitly requests a human representative",
+        "core.escalation.human_representative_request",
+    ),
+    (
+        "The customer requests a manager or supervisor",
+        "core.escalation.manager_request",
+    ),
+)
+
 #: Guardrail conditions that exist as prose and have **no** deterministic
 #: evaluator. Published so a caller can see exactly what this Engine does not
 #: check, rather than inferring coverage from the fact that it returned a result.
 #: Source: `core/guardrails/escalation.md`, "Automatic Escalation Conditions".
+#:
+#: The first two conditions are **absent** because Core now publishes a
+#: vocabulary for them and this Engine enforces it — see
+#: `_ESCALATION_VOCABULARY_SECTIONS`. The eight below remain unenforced.
 UNENFORCED_CORE_CONDITIONS: tuple[str, ...] = (
-    "The customer explicitly requests a human representative.",
-    "The customer requests a manager or supervisor.",
     "The AI cannot confidently answer after clarification.",
     "A business decision requires human approval.",
     "A complaint requires manual review.",
@@ -154,17 +192,32 @@ class GuardrailEngine:
     ) -> GuardrailResult:
         """Check the incoming message before any provider call (§8.2).
 
-        No content rule is applied: every Automatic Escalation Condition is
-        semantic and none has an authoritative deterministic evaluator. See this
-        module's docstring and `UNENFORCED_CORE_CONDITIONS`. What is checked is
-        that the Engine is able to enforce at all, and any internal failure
-        fails closed.
+        Two conditions are evaluated, against vocabulary Core publishes — the
+        first two named in `_ESCALATION_VOCABULARY_SECTIONS`. Both **escalate
+        without blocking**: the customer is asking for a person, not being
+        refused (GE-1, ruled 2026-09-05). The other eight Automatic Escalation
+        Conditions have no authoritative vocabulary and are named in
+        `UNENFORCED_CORE_CONDITIONS`.
+
+        Cheap, as §8.2 requires, and provider-free: this is a substring scan
+        over a list read from an already-loaded document. No network call, no
+        model, nothing that could make the pre-flight checkpoint cost what it
+        exists to precede.
+
+        `resolved_context` is accepted per §8.4 and not consulted: the two
+        conditions are Core-universal, and reading a project's context here
+        would make a universal guardrail project-dependent.
         """
-        del message, resolved_context  # no deterministic rule consults them yet
+        del resolved_context  # §8.4 input; no Core-universal rule consults it
         try:
             unavailable = self._guardrails_unavailable(Checkpoint.PRE_FLIGHT)
             if unavailable is not None:
                 return unavailable
+
+            escalation = self._escalation_request(message)
+            if escalation is not None:
+                return escalation
+
             return GuardrailResult(checkpoint=Checkpoint.PRE_FLIGHT)
         except Exception as exc:  # noqa: BLE001 - §8.9: never a pass, never a raise
             return self._internal_failure(Checkpoint.PRE_FLIGHT, exc)
@@ -204,6 +257,64 @@ class GuardrailEngine:
             return self._internal_failure(Checkpoint.POST_RESPONSE, exc)
 
     # -- deterministic rules -------------------------------------------------
+    def _escalation_request(self, message: str) -> GuardrailResult | None:
+        """The first matching escalation condition, or None (§8.2, GE-1).
+
+        Escalates, never blocks. `blocked=False` with a reason and a rule is a
+        shape `GuardrailResult` already permits, and it is the honest one here:
+        the turn proceeds, and the outcome carries a handoff signal.
+
+        Conditions are evaluated in Core's own order, and the first match wins —
+        a message asking for "a manager" is escalating either way, so reporting
+        the first specific reason is more useful than reporting all of them.
+        """
+        haystack = message.casefold()
+        for heading, rule in _ESCALATION_VOCABULARY_SECTIONS:
+            for phrase in self._escalation_phrases(heading):
+                if phrase.casefold() in haystack:
+                    return GuardrailResult(
+                        checkpoint=Checkpoint.PRE_FLIGHT,
+                        blocked=False,
+                        escalate=True,
+                        reason=(
+                            f"The message contains {phrase!r}. Core guardrail "
+                            f"'escalation.md: {heading}' requires escalating "
+                            f"immediately. The conversation is not blocked — the "
+                            f"customer is requesting a person, not being refused."
+                        ),
+                        triggered_rule=rule,
+                    )
+        return None
+
+    def _escalation_phrases(self, heading: str) -> tuple[str, ...]:
+        """Core's published phrases for one condition, read per call.
+
+        A bullet list under a heading `escalation.md` owns. Reading it here
+        rather than transcribing it is what keeps Core authoritative: edit the
+        document and this Engine's behaviour changes with it, with no Python to
+        keep in step. The `- ` strip is the whole of the "parsing" — §8.7 allows
+        Core Loader, not Module 2, so no markdown helper is imported.
+
+        An empty result raises rather than quietly matching nothing: a missing
+        vocabulary means this Engine cannot enforce a condition it claims to,
+        which §8.9 says must fail closed rather than become a silent no-op. The
+        caller's guard turns it into a blocked, escalating result.
+        """
+        document = self._core.guardrails["escalation.md"]
+        phrases = tuple(
+            stripped[2:].strip()
+            for line in document.section_body(heading).splitlines()
+            if (stripped := line.strip()).startswith("- ") and len(stripped) > 2
+        )
+        if not phrases:
+            raise ValueError(
+                f"core/guardrails/escalation.md publishes no trigger phrases "
+                f"under {heading!r}. Specification 8.2's pre-flight scan cannot "
+                f"be performed without them, and 8.9 forbids passing instead."
+            )
+        return phrases
+
+
     def _unsupported_prices(
         self, response: ProviderResponse, resolved_context: ResolvedContext
     ) -> tuple[str, ...]:

@@ -3,18 +3,23 @@
 Covers every §8.12 scenario that is implementable under the ratified decisions,
 and — just as importantly — **asserts the boundaries of what is not**.
 
-Two of the five §8.12 scenarios have no deterministic evaluator and are not
-faked: (a) pre-flight blocking an automatic-escalation-condition message, and
-(c) post-response blocking an attempted diagnosis. Both require semantic
-classification of free text, and the ratified decisions forbid inventing one.
-Rather than skipping them silently, the tests below pin the *reason* they are
-absent against the real `core/guardrails/` and the real project constraints, so
-the limitation is visible, reviewable, and fails loudly the day authoritative
-machine-checkable rules appear.
+**§8.12(a) is now implemented, for two conditions only** (GE-1, ruled
+2026-09-05). A message asking for a human representative or for a manager
+escalates at pre-flight, before any provider call. The vocabulary is Core's, read
+from `escalation.md`; the tests below prove the Engine enforces what the document
+says rather than a list of its own.
+
+Eight conditions remain unenforced, and **§8.12(c) — post-response blocking of an
+attempted diagnosis — remains unimplementable**: it needs semantic classification
+of free text, and the ratified decisions forbid inventing one. Rather than
+skipping it silently, the tests below pin the *reason* it is absent against the
+real `core/guardrails/` and the real project constraints, so the limitation stays
+visible and fails loudly the day authoritative machine-checkable rules appear.
 """
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import pathlib
 import re
@@ -34,13 +39,43 @@ from runtime.guardrail import (
     GuardrailResult,
 )
 from runtime.loader import FilesystemProjectSource, ProjectLoader
+from runtime.loader.markdown import split_sections
 from runtime.models.core_bundle import CoreBundle
-from runtime.models.project_context import ProjectDocument
+from runtime.models.project_context import ProjectDocument, Section
 from runtime.models.provider import ProviderResponse
 from runtime.models.resolved_context import ResolvedContext
 from runtime.resolver import Resolver
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+
+def swap_guardrail(core: CoreBundle, name: str, text: str) -> CoreBundle:
+    """A `CoreBundle` whose named guardrail carries `text`, sections re-derived.
+
+    Uses the Core Loader's own splitter, so the substituted document is shaped
+    exactly as a loaded one — the Engine must not be able to tell the difference.
+    """
+    original = core.guardrails[name]
+    parsed = split_sections(text)
+    replaced = ProjectDocument(
+        name=original.name,
+        relative_path=original.relative_path,
+        exists=True,
+        raw_text=text,
+        sections=tuple(
+            Section(
+                ordinal=index,
+                heading_text=section.heading,
+                heading_level=section.level,
+                body=section.body,
+            )
+            for index, section in enumerate(parsed.sections)
+        ),
+        preamble=parsed.preamble,
+    )
+    return dataclasses.replace(
+        core, guardrails={**dict(core.guardrails), name: replaced}
+    )
 
 
 @pytest.fixture(scope="module")
@@ -299,37 +334,53 @@ def test_a_bundleless_engine_never_passes(sunrise: ResolvedContext) -> None:
 # =============================================================================
 # §8.12(a) and (c) — NOT implementable, and deliberately not faked
 # =============================================================================
-def test_a_escalation_conditions_have_no_deterministic_evaluator() -> None:
-    """Why §8.12(a) is not tested as a real pre-flight block.
+def test_eight_escalation_conditions_still_have_no_deterministic_evaluator() -> None:
+    """The unenforced remainder, asserted against the real document.
 
-    Every Automatic Escalation Condition is semantic. Asserted against the real
-    document so this fails the day machine-checkable conditions are authored.
+    Was `..._have_no_deterministic_evaluator`, asserting all ten. GE-1 authored
+    a vocabulary for two of them, so the count moved 10 -> 8; the assertion did
+    not weaken, it narrowed to what is still true. It still fails the day
+    someone authors a vocabulary for a ninth without registering it.
     """
     escalation = (REPO_ROOT / "core" / "guardrails" / "escalation.md").read_text(
         encoding="utf-8"
     )
     for condition in UNENFORCED_CORE_CONDITIONS:
         assert condition in escalation, f"{condition!r} no longer matches Core"
-    assert len(UNENFORCED_CORE_CONDITIONS) == 10
+    assert len(UNENFORCED_CORE_CONDITIONS) == 8
+
+    # The two that moved out are enforced, not forgotten — asserted against
+    # Core, which is the authority, rather than against a runtime constant.
+    enforced = {HUMAN_HEADING, MANAGER_HEADING}
+    for heading in enforced:
+        assert core_phrases(heading), f"Core publishes no phrases under {heading!r}"
+    for condition in UNENFORCED_CORE_CONDITIONS:
+        assert condition.rstrip(".") not in enforced
 
 
-def test_a_pre_flight_does_not_guess_at_escalation_intent(
+def test_a_pre_flight_does_not_guess_at_the_unenforced_conditions(
     engine: GuardrailEngine, sunrise: ResolvedContext
 ) -> None:
     """Proof no hidden keyword list became this framework's safety semantics.
 
-    Each message below plainly matches a prose escalation condition. None is
-    blocked, because no authoritative machine-checkable rule exists — and a
-    keyword list that appeared to work would be worse than an honest gap.
+    Each message below plainly matches one of the eight prose conditions Core
+    publishes no vocabulary for. None escalates, because guessing would be worse
+    than an honest gap.
+
+    The two messages that used to sit in this list — asking for a human, asking
+    for a manager — moved to the tests above: Core now publishes phrases for
+    them, so they escalate. This test kept every case whose premise still holds.
     """
     for message in (
-        "I want to speak to a human representative",
-        "get me your manager",
         "I dispute this payment",
         "this is a legal matter",
         "there is a security problem",
+        "I am not confident you understood me",
+        "this complaint needs reviewing",
     ):
-        assert engine.check_pre_flight(message, sunrise).passed
+        result = engine.check_pre_flight(message, sunrise)
+        assert result.passed
+        assert not result.escalate, f"{message!r} escalated on no authority"
 
 
 def test_c_project_constraints_have_no_deterministic_evaluator(
@@ -358,12 +409,14 @@ def test_c_an_attempted_diagnosis_is_not_blocked(
 
 def test_the_engine_publishes_what_it_does_not_enforce() -> None:
     """A caller must be able to see the gap, not infer coverage from a result."""
-    assert len(UNENFORCED_CORE_CONDITIONS) == 10
+    assert len(UNENFORCED_CORE_CONDITIONS) == 8
     assert UNENFORCED_PROJECT_CONSTRAINTS
-    src = (REPO_ROOT / "runtime" / "guardrail" / "engine.py").read_text(
-        encoding="utf-8"
+    src = " ".join(
+        (REPO_ROOT / "runtime" / "guardrail" / "engine.py")
+        .read_text(encoding="utf-8")
+        .split()
     )
-    assert "currently has no content rule" in " ".join(src.split())
+    assert "evaluates exactly two conditions and no others" in src
 
 
 def test_no_keyword_or_classifier_machinery_exists() -> None:
@@ -373,6 +426,181 @@ def test_no_keyword_or_classifier_machinery_exists() -> None:
     for forbidden in ("KEYWORDS", "keyword_list", "classify", "similarity",
                       "threshold", "confidence", ".lower()"):
         assert forbidden not in src, f"engine.py contains {forbidden}"
+
+
+# =============================================================================
+# GE-1 — §8.12(a): pre-flight escalation on Core's published vocabulary
+# =============================================================================
+def core_phrases(heading: str) -> tuple[str, ...]:
+    """The phrases Core publishes, read from the document the Engine reads."""
+    body = (REPO_ROOT / "core" / "guardrails" / "escalation.md").read_text(
+        encoding="utf-8"
+    )
+    section = body.split(f"### {heading}\n", 1)[1].split("\n#", 1)[0]
+    return tuple(
+        line[2:].strip() for line in section.splitlines() if line.startswith("- ")
+    )
+
+
+HUMAN_HEADING = "The customer explicitly requests a human representative"
+MANAGER_HEADING = "The customer requests a manager or supervisor"
+
+
+def test_ge1_a_human_representative_request_escalates(
+    engine: GuardrailEngine, sunrise: ResolvedContext
+) -> None:
+    """§8.12(a), condition 1 — the scenario that could not be written before."""
+    result = engine.check_pre_flight(
+        "Can I please speak to a human about my appointment?", sunrise
+    )
+    assert result.escalate
+    assert not result.blocked
+    assert result.checkpoint is Checkpoint.PRE_FLIGHT
+    assert result.triggered_rule == "core.escalation.human_representative_request"
+    assert result.origin is GuardrailOrigin.CORE
+    assert result.reason and HUMAN_HEADING in result.reason
+
+
+def test_ge1_a_manager_request_escalates(
+    engine: GuardrailEngine, sunrise: ResolvedContext
+) -> None:
+    """§8.12(a), condition 2."""
+    result = engine.check_pre_flight("I want to speak to a manager now", sunrise)
+    assert result.escalate
+    assert not result.blocked
+    assert result.triggered_rule == "core.escalation.manager_request"
+    assert result.origin is GuardrailOrigin.CORE
+    assert result.reason and MANAGER_HEADING in result.reason
+
+
+def test_ge1_neither_condition_ever_blocks(
+    engine: GuardrailEngine, sunrise: ResolvedContext
+) -> None:
+    """The ruled semantics: a handoff request is not a service refusal.
+
+    Every phrase Core publishes, checked — not a sample.
+    """
+    for heading in (HUMAN_HEADING, MANAGER_HEADING):
+        for phrase in core_phrases(heading):
+            result = engine.check_pre_flight(f"hello, {phrase} please", sunrise)
+            assert result.escalate, f"{phrase!r} did not escalate"
+            assert not result.blocked, f"{phrase!r} blocked, which GE-1 forbids"
+
+
+def test_ge1_matching_is_case_insensitive(
+    engine: GuardrailEngine, sunrise: ResolvedContext
+) -> None:
+    for message in ("SPEAK TO A MANAGER", "Speak To A Human", "speak to a human"):
+        assert engine.check_pre_flight(message, sunrise).escalate
+
+
+def test_ge1_an_ordinary_message_does_not_escalate(
+    engine: GuardrailEngine, sunrise: ResolvedContext
+) -> None:
+    """No spurious escalation — the false-positive floor."""
+    for message in (
+        "What are your opening hours?",
+        "Do you offer teeth whitening?",
+        "I would like to book a cleaning appointment",
+        "Thanks, that answers my question",
+    ):
+        result = engine.check_pre_flight(message, sunrise)
+        assert result.passed
+        assert not result.escalate
+        assert result.triggered_rule is None
+
+
+def test_ge1_the_vocabulary_is_core_content_not_python() -> None:
+    """The substance of the ruling: Core is authoritative, Python is not.
+
+    Every phrase the Engine can match appears in `escalation.md`, and no phrase
+    is written in `engine.py`. Reversing this — a list in Python that Core
+    happens to agree with — is exactly what the ruling forbids.
+
+    The two section headings are *addresses*, not vocabulary, and are expected
+    in `engine.py`; they are removed before scanning so their presence cannot
+    mask a hardcoded phrase that happens to be a substring of one.
+    """
+    src = (REPO_ROOT / "runtime" / "guardrail" / "engine.py").read_text(
+        encoding="utf-8"
+    )
+    for heading in (HUMAN_HEADING, MANAGER_HEADING):
+        src = src.replace(heading, "")
+
+    for heading in (HUMAN_HEADING, MANAGER_HEADING):
+        phrases = core_phrases(heading)
+        assert phrases, f"Core publishes no phrases under {heading!r}"
+        for phrase in phrases:
+            assert phrase not in src, f"engine.py hardcodes the phrase {phrase!r}"
+
+
+def test_ge1_the_engine_follows_core_when_core_changes(
+    core: CoreBundle, sunrise: ResolvedContext
+) -> None:
+    """Proof of derivation rather than transcription.
+
+    A Core document carrying a different phrase produces different behaviour
+    with no code change. A transcribed copy would ignore this entirely.
+    """
+    escalation = core.guardrails["escalation.md"]
+    rewritten = escalation.raw_text.replace(
+        "- speak to a human", "- put me through to a badger"
+    )
+    patched = swap_guardrail(core, "escalation.md", rewritten)
+    engine = GuardrailEngine(patched)
+
+    assert engine.check_pre_flight("put me through to a badger", sunrise).escalate
+    assert not engine.check_pre_flight("speak to a human", sunrise).escalate
+
+
+def test_ge1_a_missing_vocabulary_fails_closed(
+    core: CoreBundle, sunrise: ResolvedContext
+) -> None:
+    """§8.9: an Engine that cannot enforce must not quietly pass.
+
+    Deleting the phrase list leaves a document that still exists and is not
+    empty, so the bundle-integrity check passes — and the Engine would silently
+    stop escalating. It blocks instead.
+    """
+    escalation = core.guardrails["escalation.md"]
+    gutted = escalation.raw_text.replace(f"### {HUMAN_HEADING}", "### Removed")
+    engine = GuardrailEngine(swap_guardrail(core, "escalation.md", gutted))
+
+    result = engine.check_pre_flight("hello", sunrise)
+    assert result.blocked
+    assert result.escalate
+    assert result.origin is GuardrailOrigin.ENGINE
+    assert result.triggered_rule == "engine.internal_failure"
+
+
+def test_ge1_no_provider_is_reachable_from_the_engine() -> None:
+    """§8.2 "before any LLM call" and §8.7: Module 8 has no provider path.
+
+    Structural rather than behavioural: the Engine cannot call a provider
+    because nothing provider-shaped is imported or referenced.
+    """
+    src = (REPO_ROOT / "runtime" / "guardrail" / "engine.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            assert not module.startswith("runtime.provider"), module
+            assert module.startswith("runtime.models") or module == "__future__", module
+
+
+def test_ge1_post_response_is_unchanged_by_the_pre_flight_rule(
+    engine: GuardrailEngine, sunrise: ResolvedContext
+) -> None:
+    """A message asking for a manager does not change post-response behaviour."""
+    assert engine.check_post_response(response("Hello there."), sunrise).passed
+    blocked = engine.check_post_response(
+        response("A crown is $4,321 including the fitting."), sunrise
+    )
+    assert blocked.blocked
+    assert blocked.triggered_rule == "core.safety.unsupported_price"
+    assert not blocked.escalate
 
 
 # =============================================================================
