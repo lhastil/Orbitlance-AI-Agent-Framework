@@ -43,6 +43,7 @@ from runtime.models.resolved_context import ResolvedContext
 from runtime.models.runtime import RuntimeRequest, RuntimeResponse
 from runtime.models.tool import ToolRequest, ToolResponse
 from runtime.models.validation import ValidationResult, ValidationTarget
+from runtime.models.workflow import WorkflowTransitionDecision
 from runtime.observability import AuditLogger
 from runtime.provider import (
     ModelBinding,
@@ -1422,6 +1423,119 @@ def test_the_engine_package_depends_only_downward() -> None:
             ):
                 package = ".".join(node.module.split(".")[:2])
                 assert package in allowed, f"{path.name} imports {node.module}"
+
+
+# =============================================================================
+# WR-1 — message-driven routing through the real pipeline
+# =============================================================================
+def core_routing_phrase(workflow: str, target: str) -> str:
+    """One phrase Core publishes, read from the document the router reads."""
+    text = (REPO_ROOT / "core" / "workflows" / f"{workflow}.md").read_text(
+        encoding="utf-8"
+    )
+    body = text.split("## Routing Phrases", 1)[1].split(f"### {target}\n", 1)[1]
+    return next(
+        line[2:].strip()
+        for line in body.split("\n#", 1)[0].splitlines()
+        if line.startswith("- ")
+    )
+
+
+def workflow_states(engine: RuntimeEngine) -> WorkflowStateManager:
+    stage = next(s for s in engine._pipeline if s.name == "workflow")  # noqa: SLF001
+    return stage._states  # noqa: SLF001
+
+
+def test_wr1_routing_is_wired_end_to_end_through_activate(
+    core: CoreBundle, audit_database: pathlib.Path
+) -> None:
+    """The router runs on every turn and receives the real message.
+
+    Not a transition — see the honest limitation below. What this proves is that
+    §14's WorkflowStage reaches the Router with the customer's own words and
+    commits the result through Module 7.
+    """
+    del audit_database
+    engine = activate(
+        core, FIXTURES, FIXTURE_ID, ProviderRegistry().register(FixtureAdapter())
+    )
+    states = workflow_states(engine)
+
+    engine.handle_request(request("Hello there", conversation_id="wr1-a"))
+    assert states.get_state("wr1-a").active_workflow == "discovery"
+    assert states.get_state("wr1-a").transition_history == ("None->discovery",)
+
+
+def test_wr1_an_unpublished_message_keeps_the_workflow_end_to_end(
+    core: CoreBundle, audit_database: pathlib.Path
+) -> None:
+    """§6.9 through the whole pipeline, and the turn completes normally."""
+    del audit_database
+    engine = activate(
+        core, FIXTURES, FIXTURE_ID, ProviderRegistry().register(FixtureAdapter())
+    )
+    states = workflow_states(engine)
+
+    for message in ("Hello", "What are your opening hours?", "Thanks"):
+        response = engine.handle_request(request(message, conversation_id="wr1-b"))
+        assert not response.blocked
+        assert not response.degraded
+    assert states.get_state("wr1-b").active_workflow == "discovery"
+
+
+def test_wr1_another_workflows_vocabulary_does_not_move_this_one(
+    core: CoreBundle, audit_database: pathlib.Path
+) -> None:
+    """A workflow routes only on what *it* publishes.
+
+    `"that sounds good"` is `recommendation`'s vocabulary. A discovery
+    conversation must not move on it, end to end.
+    """
+    del audit_database
+    engine = activate(
+        core, FIXTURES, FIXTURE_ID, ProviderRegistry().register(FixtureAdapter())
+    )
+    states = workflow_states(engine)
+
+    phrase = core_routing_phrase("recommendation", "consultation")
+    engine.handle_request(request(phrase, conversation_id="wr1-c"))
+    assert states.get_state("wr1-c").active_workflow == "discovery"
+
+
+def test_wr1_no_activatable_fixture_can_execute_a_transition_end_to_end(
+    core: CoreBundle, audit_database: pathlib.Path
+) -> None:
+    """**H-1, asserted rather than asserted-away.** A fixture-coverage limit.
+
+    `fixture_clinic` is the only activatable project, and it enables
+    `discovery` and `consultation` only. Discovery's published target is
+    `recommendation`, which the fixture does not enable — so a conversation that
+    advanced would hit the Prompt Assembler's project-scope check on the *next*
+    turn and degrade. This test pins that reality so it cannot be mistaken for a
+    routing defect, and so it fails the day a fixture enables Recommendation.
+
+    Both transitions are proven at the Router -> Module 7 seam in
+    `tests/workflow_router/`, which is the coverage H-1's ruling authorizes.
+    """
+    del audit_database
+    engine = activate(
+        core, FIXTURES, FIXTURE_ID, ProviderRegistry().register(FixtureAdapter())
+    )
+    enabled = engine._context.config.enabled_workflows  # noqa: SLF001
+    assert "recommendation" not in enabled
+
+    states = workflow_states(engine)
+    engine.handle_request(request("hello", conversation_id="wr1-d"))
+    states.commit_transition(
+        "wr1-d", WorkflowTransitionDecision(target_workflow="recommendation")
+    )
+
+    degraded = engine.handle_request(
+        request(core_routing_phrase("recommendation", "consultation"),
+                conversation_id="wr1-d")
+    )
+    assert degraded.degraded, "the unenabled workflow should degrade the turn"
+    assert not degraded.blocked
 
 
 # =============================================================================

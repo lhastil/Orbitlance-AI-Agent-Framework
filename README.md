@@ -33,7 +33,7 @@ The frozen specification defines fifteen runtime modules. All fifteen are implem
 | 3 | Resolver | ✅ Implemented |
 | 4 | Prompt Assembler | ✅ Implemented |
 | 5 | Token Budget Manager | ✅ Implemented |
-| 6 | Workflow Router | ✅ Implemented — structural routing only; no semantic classification |
+| 6 | Workflow Router | ✅ Implemented — deterministic routing on Core-published phrases; two transitions today |
 | 7 | Workflow State Manager | ✅ Implemented |
 | 8 | Guardrail Engine | ✅ Implemented — pre-flight escalates on two Core-published conditions; the other eight stay unenforced |
 | 9 | Provider Interface | ✅ Implemented |

@@ -33,6 +33,40 @@ from runtime.workflow_router import (
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
+def swap_workflow(core: CoreBundle, name: str, text: str) -> CoreBundle:
+    """A `CoreBundle` whose named workflow carries `text`, sections re-derived.
+
+    Uses the Core Loader's own splitter, so the substituted document is shaped
+    exactly as a loaded one — the router must not be able to tell the difference.
+    """
+    import dataclasses
+
+    from runtime.loader.markdown import split_sections
+    from runtime.models.project_context import ProjectDocument, Section
+
+    original = core.workflows[name]
+    parsed = split_sections(text)
+    replaced = ProjectDocument(
+        name=original.name,
+        relative_path=original.relative_path,
+        exists=True,
+        raw_text=text,
+        sections=tuple(
+            Section(
+                ordinal=index,
+                heading_text=section.heading,
+                heading_level=section.level,
+                body=section.body,
+            )
+            for index, section in enumerate(parsed.sections)
+        ),
+        preamble=parsed.preamble,
+    )
+    return dataclasses.replace(
+        core, workflows={**dict(core.workflows), name: replaced}
+    )
+
+
 @pytest.fixture(scope="module")
 def core() -> CoreBundle:
     return CoreLoader(FilesystemCoreSource(REPO_ROOT / "core")).get_core_bundle()
@@ -99,17 +133,19 @@ def test_an_active_workflow_is_retained(
 
 @pytest.mark.parametrize(
     "message",
-    ["", "   ", "yes", "I accept the recommendation", "book me a consultation",
-     "we have collected sufficient information"],
+    ["", "   ", "yes", "we have collected sufficient information",
+     "I accept the recommendation", "book me a consultation"],
 )
-def test_no_message_content_changes_the_outcome(
+def test_a_message_discovery_does_not_publish_keeps_the_workflow(
     router: WorkflowRouter, core: CoreBundle, message: str
 ) -> None:
-    """Proof there is no hidden keyword list acting as framework semantics.
+    """Proof there is still no hidden keyword list acting as framework semantics.
 
-    Several of these read like the prose transitions in the workflow documents.
-    None of them moves the router, because no machine-checkable rule exists and
-    none was invented.
+    Every message here reads like a prose transition, and the last two are
+    genuinely routing phrases — **for `recommendation`, not for `discovery`**.
+    A workflow routes only on what *it* publishes, so none of these moves a
+    discovery conversation. Two of them did move it in an earlier draft of this
+    suite, which is exactly the confusion this case now pins.
     """
     assert router.route(state("discovery"), message, core).target_workflow == "discovery"
 
@@ -117,12 +153,14 @@ def test_no_message_content_changes_the_outcome(
 # =============================================================================
 # 3. deterministic transition — DOCUMENTED AS NOT AVAILABLE
 # =============================================================================
-def test_no_machine_checkable_transition_rule_exists_in_core() -> None:
-    """Why §6.12(a) is not tested as a real transition.
+def test_the_prose_decision_points_are_still_judgements() -> None:
+    """The prose rules did not become machine-checkable; a vocabulary was added.
 
-    Asserted against the actual documents so this limitation is visible, and so
-    the day someone authors machine-readable rules this test fails and points at
-    the router that should then implement them.
+    Was `test_no_machine_checkable_transition_rule_exists_in_core`, written to
+    fail the day rules were authored. WR-1 authored them — as a **separate**
+    Core-published routing vocabulary, not by rewriting these Decision Points.
+    Both halves are asserted: the judgements below are unchanged, and the
+    vocabulary lives elsewhere (see the WR-1 tests further down).
     """
     import re
 
@@ -154,13 +192,19 @@ def test_no_machine_checkable_transition_rule_exists_in_core() -> None:
         assert phrase in src, f"{stem} no longer states {phrase!r}"
 
 
-def test_the_router_documents_that_it_cannot_advance_a_conversation() -> None:
+def test_the_router_documents_that_core_owns_the_vocabulary() -> None:
+    """Was an assertion that the router could not advance a conversation.
+
+    WR-1 made that false. What replaces it is the claim that matters now: this
+    module defines no phrase and no ordering, and says so.
+    """
     src = " ".join(
         (REPO_ROOT / "runtime" / "workflow_router" / "router.py")
         .read_text(encoding="utf-8")
         .split()
     )
-    assert "never advances a conversation past its first workflow" in src
+    assert "defines no phrase and no ordering" in src
+    assert "never advances a conversation past its first workflow" not in src
 
 
 # =============================================================================
@@ -373,13 +417,291 @@ def test_collected_data_is_a_read_only_mapping(
         decision.collected_data["k"] = "v"  # type: ignore[index]
 
 
-def test_the_router_invents_no_extraction_rules() -> None:
+def test_the_router_invents_no_classification_machinery() -> None:
+    """Was `test_the_router_invents_no_extraction_rules`.
+
+    Its premise — that the router must not inspect the message at all — was
+    correct until WR-1 authorized exactly that. What survives is the part that
+    still holds and still matters: **no pattern machinery, no scoring, no
+    thresholds, no invented vocabulary**. `startswith` and `in` were removed
+    from the list because the implementation now uses them to strip a Core
+    bullet and to match a Core phrase, which is the authorized behaviour; the
+    stronger guarantee is asserted separately by
+    `test_wr1_no_routing_phrase_is_authoritative_in_python`.
+    """
     src = (REPO_ROOT / "runtime" / "workflow_router" / "router.py").read_text(
         encoding="utf-8"
     )
-    for forbidden in ("re.search", "re.match", "regex", "keywords", "KEYWORDS",
-                      ".lower()", "startswith", "in message"):
-        assert forbidden not in src, f"router.py inspects the message via {forbidden}"
+    for forbidden in ("re.search", "re.match", "re.compile", "regex", "keywords",
+                      "KEYWORDS", "threshold", "confidence", "score",
+                      "similarity", "classify", ".lower()"):
+        assert forbidden not in src, f"router.py uses {forbidden}"
+
+
+# =============================================================================
+# WR-1 — §6.2: message-driven routing on Core-published vocabulary
+# =============================================================================
+ROUTING_SECTION = "Routing Phrases"
+PUBLISHED = {"discovery": "recommendation", "recommendation": "consultation"}
+
+
+def published_phrases(workflow: str, target: str) -> tuple[str, ...]:
+    """The phrases Core publishes, read from the document the router reads."""
+    text = (REPO_ROOT / "core" / "workflows" / f"{workflow}.md").read_text(
+        encoding="utf-8"
+    )
+    section = text.split(f"## {ROUTING_SECTION}", 1)[1]
+    body = section.split(f"### {target}\n", 1)[1].split("\n#", 1)[0]
+    return tuple(
+        line[2:].strip() for line in body.splitlines() if line.startswith("- ")
+    )
+
+
+def test_wr1_discovery_advances_to_recommendation(
+    router: WorkflowRouter, core: CoreBundle
+) -> None:
+    """§6.12(a) as a real transition — the scenario that could not be written."""
+    for phrase in published_phrases("discovery", "recommendation"):
+        decision = router.route(state("discovery"), f"Hi, {phrase}?", core)
+        assert decision.target_workflow == "recommendation", phrase
+
+
+def test_wr1_recommendation_advances_to_consultation(
+    router: WorkflowRouter, core: CoreBundle
+) -> None:
+    for phrase in published_phrases("recommendation", "consultation"):
+        decision = router.route(state("recommendation"), f"OK — {phrase}.", core)
+        assert decision.target_workflow == "consultation", phrase
+
+
+def test_wr1_matching_is_case_insensitive(
+    router: WorkflowRouter, core: CoreBundle
+) -> None:
+    phrase = published_phrases("recommendation", "consultation")[0]
+    for variant in (phrase.upper(), phrase.title(), phrase):
+        assert (
+            router.route(state("recommendation"), variant, core).target_workflow
+            == "consultation"
+        )
+
+
+def test_wr1_the_latest_message_changes_the_decision(
+    router: WorkflowRouter, core: CoreBundle
+) -> None:
+    """The same state, two messages, two outcomes — §6.2's message clause."""
+    phrase = published_phrases("discovery", "recommendation")[0]
+    current = state("discovery")
+    assert router.route(current, phrase, core).target_workflow == "recommendation"
+    assert router.route(current, "how do I get there?", core).target_workflow == "discovery"
+
+
+def test_wr1_an_unpublished_message_stays_put(
+    router: WorkflowRouter, core: CoreBundle
+) -> None:
+    """§6.9 conservative default, on the workflows that do publish a vocabulary."""
+    for active in PUBLISHED:
+        for message in ("", "   ", "hello", "what are your opening hours?"):
+            assert (
+                router.route(state(active), message, core).target_workflow == active
+            )
+
+
+def test_wr1_a_workflow_publishing_nothing_routes_nowhere(
+    router: WorkflowRouter, core: CoreBundle
+) -> None:
+    """consultation, crm_sync, follow_up and voice_agent publish no vocabulary.
+
+    They are out of WR-1's scope, and the router must not invent one for them.
+    `consultation` in particular has no onward target: what completion means is
+    WR-2, which this work does not implement.
+    """
+    for active in ("consultation", "crm_sync", "follow_up", "voice_agent"):
+        for message in ("I accept the recommendation", "submit the request",
+                        "what do you recommend", "yes please"):
+            assert (
+                router.route(state(active), message, core).target_workflow == active
+            )
+
+
+def test_wr1_no_published_target_is_regressive() -> None:
+    """H-2: no-regression is a property of Core's content, asserted here.
+
+    The router holds no ordering table by design, so this is where the
+    progression is guaranteed. A backward subsection published tomorrow fails
+    this test rather than silently making conversations oscillate.
+    """
+    order = ["discovery", "recommendation", "consultation"]
+    for workflow in (REPO_ROOT / "core" / "workflows").glob("*.md"):
+        text = workflow.read_text(encoding="utf-8")
+        if f"## {ROUTING_SECTION}" not in text:
+            continue
+        section = text.split(f"## {ROUTING_SECTION}", 1)[1].split("\n## ", 1)[0]
+        targets = [
+            line[4:].strip() for line in section.splitlines() if line.startswith("### ")
+        ]
+        assert targets, f"{workflow.name} publishes a routing section with no target"
+        for target in targets:
+            assert target in order, f"{workflow.name} routes to {target!r}"
+            assert order.index(target) > order.index(workflow.stem), (
+                f"{workflow.name} publishes a regressive target {target!r}"
+            )
+
+
+def test_wr1_only_the_two_authorized_workflows_publish_a_vocabulary() -> None:
+    """Scope, asserted against Core rather than assumed."""
+    publishing = {
+        path.stem
+        for path in (REPO_ROOT / "core" / "workflows").glob("*.md")
+        if f"## {ROUTING_SECTION}" in path.read_text(encoding="utf-8")
+    }
+    assert publishing == set(PUBLISHED)
+
+
+def test_wr1_every_published_target_exists_in_core(core: CoreBundle) -> None:
+    """§6.10, at the source: Core cannot publish a target Core does not define."""
+    for workflow, target in PUBLISHED.items():
+        assert f"{target}.md" in core.workflows
+        assert published_phrases(workflow, target)
+
+
+def test_wr1_no_decision_ever_targets_submit(
+    router: WorkflowRouter, core: CoreBundle
+) -> None:
+    """WR-2's boundary: `submit` is not a workflow and must never be a target."""
+    assert "submit.md" not in core.workflows
+    for active in (None, "discovery", "recommendation", "consultation"):
+        for message in ("submit the consultation request", "I confirm the information",
+                        "please submit it"):
+            decision = router.route(state(active), message, core)
+            assert decision.target_workflow != "submit"
+            assert f"{decision.target_workflow}.md" in core.workflows
+
+
+def test_wr1_no_routing_phrase_is_authoritative_in_python() -> None:
+    """The substance of the ruling: Core is the authority, Python is not.
+
+    Every phrase the router can match appears in `core/workflows/`, and none is
+    written in `router.py`. A list in Python that Core happens to agree with is
+    exactly what the ruling forbids.
+    """
+    src = (REPO_ROOT / "runtime" / "workflow_router" / "router.py").read_text(
+        encoding="utf-8"
+    )
+    for workflow, target in PUBLISHED.items():
+        phrases = published_phrases(workflow, target)
+        assert phrases
+        for phrase in phrases:
+            assert phrase not in src, f"router.py hardcodes {phrase!r}"
+
+
+def test_wr1_the_router_holds_no_workflow_ordering_policy() -> None:
+    """H-2: the progression is Core-declared, not tabulated in Python.
+
+    `_ROUTING_SECTION` is the one routing constant, and it is an address. A
+    from/to map here would move ordering policy into the runtime.
+
+    Checked against **executable string values only** — docstrings and comments
+    are prose and may discuss workflows freely. `discovery` is exempt because
+    `FIRST_TURN_WORKFLOW` is R-1's single reviewable choice, sourced from Core
+    and asserted by `test_the_first_turn_choice_is_supported_by_core_content`.
+    Every other workflow name appearing in executable code would be an ordering
+    table by another name.
+    """
+    import ast
+
+    tree = ast.parse(
+        (REPO_ROOT / "runtime" / "workflow_router" / "router.py").read_text(
+            encoding="utf-8"
+        )
+    )
+    docstrings = {
+        id(node.body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef)
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+    }
+    values = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in docstrings
+    ]
+    for workflow in ("recommendation", "consultation", "crm_sync", "follow_up",
+                     "voice_agent"):
+        for value in values:
+            assert workflow not in value, f"router.py names {workflow!r} in code"
+
+
+def test_wr1_the_router_follows_core_when_core_changes(
+    router: WorkflowRouter, core: CoreBundle
+) -> None:
+    """Proof of derivation rather than transcription.
+
+    A Core document carrying a different phrase produces different behaviour
+    with no code change. A transcribed copy would ignore this entirely.
+    """
+    original = core.workflows["discovery.md"]
+    phrase = published_phrases("discovery", "recommendation")[0]
+    rewritten = original.raw_text.replace(f"- {phrase}", "- summon the badger")
+    patched = swap_workflow(core, "discovery.md", rewritten)
+
+    assert router.route(state("discovery"), "summon the badger", patched).target_workflow == "recommendation"
+    assert router.route(state("discovery"), phrase, patched).target_workflow == "discovery"
+
+
+def test_wr1_collected_data_is_still_empty_on_a_transition(
+    router: WorkflowRouter, core: CoreBundle
+) -> None:
+    """D-3 unchanged: advancing a workflow extracts nothing."""
+    phrase = published_phrases("discovery", "recommendation")[0]
+    decision = router.route(state("discovery"), phrase, core)
+    assert decision.target_workflow == "recommendation"
+    assert dict(decision.collected_data) == {}
+
+
+def test_wr1_a_transition_is_deterministic_and_side_effect_free(
+    router: WorkflowRouter, core: CoreBundle
+) -> None:
+    """§6.12(c) on the new path, not only on the stay-put path."""
+    phrase = published_phrases("recommendation", "consultation")[0]
+    current = state("recommendation")
+    first = router.route(current, phrase, core)
+    second = router.route(current, phrase, core)
+    assert first == second
+    assert current.active_workflow == "recommendation"
+
+
+def test_wr1_the_seam_carries_a_real_transition_through_module_seven(
+    router: WorkflowRouter, core: CoreBundle
+) -> None:
+    """H-1's Router -> Module 7 proof for discovery -> recommendation.
+
+    No activatable fixture enables Recommendation, so the end-to-end proof for
+    this transition stops here, at the seam §6 and §7 actually share. The
+    limitation is the fixtures', not the router's — recorded in WR-1's closure.
+    """
+    from runtime.workflow_state import WorkflowStateManager
+
+    states = WorkflowStateManager()
+    states.commit_transition("c1", router.route(state(None), "hello", core))
+    assert states.get_state("c1").active_workflow == "discovery"
+
+    phrase = published_phrases("discovery", "recommendation")[0]
+    committed = states.commit_transition(
+        "c1", router.route(states.get_state("c1"), phrase, core)
+    )
+    assert committed.active_workflow == "recommendation"
+    assert committed.transition_history[-1] == "discovery->recommendation"
+
+    phrase = published_phrases("recommendation", "consultation")[0]
+    committed = states.commit_transition(
+        "c1", router.route(states.get_state("c1"), phrase, core)
+    )
+    assert committed.active_workflow == "consultation"
+    assert committed.transition_history[-1] == "recommendation->consultation"
 
 
 # =============================================================================

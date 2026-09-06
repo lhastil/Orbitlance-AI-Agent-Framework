@@ -160,6 +160,40 @@ If new business needs emerge:
 
 ---
 
+## Routing Phrases
+
+**This section is the authoritative source of the runtime's deterministic routing vocabulary for this workflow.** The Workflow Router reads the phrases below from this document; it never defines them in code. Adding, removing or rewording a phrase here changes routing behaviour, and is a deliberate Core-content change.
+
+The phrases below represent the Decision Point above — *"If the customer accepts the recommendation"* — which is a property of what the customer just said, so the vocabulary is a direct machine-readable form of the existing rule rather than a new one.
+
+**The other two branches are deliberately absent.** *"If the customer has questions"* keeps the conversation here, which is already what happens when nothing matches. *"If new business needs emerge: ➡ Return to Discovery Workflow"* is a **backward** transition, and the deterministic router does not move a conversation backward; that branch remains prose for the agent to follow.
+
+Matching is case-insensitive, and a matched phrase advances the conversation. A message matching nothing keeps the conversation in this workflow — the conservative default.
+
+Each subsection heading below names the workflow the phrases route to.
+
+### consultation
+
+- I accept the recommendation
+- I accept your recommendation
+- that sounds good
+- that works for me
+- let's go ahead
+- lets go ahead
+- let's proceed
+- lets proceed
+- I would like to proceed
+- I'd like to proceed
+- book a consultation
+- book me a consultation
+- schedule a consultation
+- request a consultation
+- I want to book
+- I would like to book
+- I'd like to book
+
+---
+
 ## Inputs
 
 - Discovery Summary

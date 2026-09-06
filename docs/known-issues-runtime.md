@@ -13,8 +13,9 @@ signature or requires rewriting a shipped module. Confidence in
 below the Task 2 heading.
 
 **Eleven open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
-RE-3, RE-5, AUDIT-6, WR-1**, recorded during Modules 10, 11, 14 and 15,
-the §14 post-implementation audit, and the Step 4 roadmap audit of 2026-09-05.
+RE-3, RE-5, AUDIT-6, WR-2**, recorded during Modules 10, 11, 14 and 15,
+the §14 post-implementation audit, the Step 4 roadmap audit of 2026-09-05, and
+the WR-1 implementation audit of the same day.
 **WR-1 and GE-1 are not new defects** — both were disclosed in source and in
 README from their own module milestones, and both are pinned by tests; what they
 lacked until 2026-09-05 was a register identifier, an owner and a closure
@@ -107,7 +108,8 @@ one class.
 | **OB-1** | **Durable audit persistence** | **Closed** — production path wired to SQLite |
 | **OB-2** | **§15.12(d) duplicate-ID scenario cannot arise; not faked** | **Documentation / Reporting** |
 | **OB-3** | **§15.9 audit-gap alert has no seam** | **Closed** — alert raised at §14's containment guard |
-| **WR-1** | **§6.2's message-driven routing is not implemented; no conversation advances past its first workflow** | **Architecture Issue** |
+| **WR-1** | **§6.2's message-driven routing is not implemented; no conversation advances past its first workflow** | **Closed** — two transitions on Core-published vocabulary |
+| **WR-2** | **Consultation completion has no runtime contract; "submit" is prose only** | **Architecture Issue** |
 | **GE-1** | **§8.2's pre-flight content scan is not implemented; no inbound message is checked** | **Closed** — two conditions enforced from Core vocabulary |
 | **PA-4** | **§4 cites an assembly order in a section that does not exist** | **Documentation / Reporting** |
 | **PA-5** | **Playbook provenance check inspected only the first source** | **Closed** |
@@ -2158,6 +2160,8 @@ issues in separate modules with separate closure routes.
 
 **Class: Architecture Issue** · Ruling D-4 deferred the provider path; this entry
 registers the consequence, which had no identifier until 2026-09-05.
+✅ **CLOSED 2026-09-05** — see the resolution note after the ruling below. The
+description that follows is the state as registered, retained for history.
 
 §6.2 requires the Router to consult each workflow's Trigger/Decision Point rules
 *"against the current state **and latest message**"*. `route()` accepts
@@ -2209,6 +2213,356 @@ Pinned by `test_no_machine_checkable_transition_rule_exists_in_core`,
 `test_the_router_documents_that_it_cannot_advance_a_conversation`,
 `test_no_message_content_changes_the_outcome` and
 `test_an_active_workflow_is_retained`.
+
+---
+
+### Ruling, 2026-09-05 — WR-1's routing strategy and where its authority lives
+
+**Accepted architectural ruling:**
+
+> **§6.2's message-driven routing is satisfied by Core-authored deterministic
+> rules consulted against the latest message — not by runtime heuristics, and
+> not by a provider call.**
+
+**Ratified, not yet implemented.** This section records the decision; the
+behaviour it authorizes does not exist yet. **WR-1 stays open until the closure
+criteria below are met.**
+
+| | |
+|---|---|
+| **Strategy** | Core-authored deterministic/heuristic routing as the **primary** mechanism. The runtime consults machine-readable rules Core publishes and **must not become the authoritative source of routing policy** |
+| **In scope** | **Two workflow transitions** — **discovery → recommendation** and **recommendation → consultation** — plus **one terminal completion action**, Consultation's *"Submit the consultation request"*, which is **not** a transition. See the amendment below |
+| **Out of scope** | `crm_sync` transitions, `voice_agent` channel-driven transitions, tool-result-driven routing, project-specific rules, `collected_data` extraction, provider/LLM semantic routing |
+
+**Why deterministic and not semantic.** §6.3 makes deterministic/heuristic
+classification the primary mechanism and permits an LLM *"only as a secondary
+signal for genuinely ambiguous cases"*, warning that *"an LLM call on every
+routing decision taxes every turn of every conversation."* §6.11 names the
+sequence directly — *"rules-based now, ML-classifier later."* **No Provider or
+LLM call is authorized for the WR-1 routing decision**; provider-backed semantic
+routing remains a future decision and is not part of this closure.
+
+**Where the authority lives.** The rules belong in the relevant files under
+`core/workflows/`, **each workflow owning its own machine-consultable
+Trigger/Decision Point vocabulary**. The runtime may read, transcribe or use
+them; it may not independently define workflow semantics. No separate runtime
+routing vocabulary, and no new repository convention for expressing rules.
+Routing authority does **not** move into `projects/*/config.md`: project config
+stays selection and configuration, never workflow semantics.
+
+**Conservative fallback, unchanged.** When no deterministic rule matches the
+current state and latest message, the current workflow is preserved and no
+transition is guessed — §6.9 exactly as it stands. **No confidence thresholds**
+and no semantic classification outside the Core-authored rules.
+
+**One-way progression, and the reason it matters.** The two authorized
+transitions advance along `discovery → recommendation → consultation` and
+**no automatic regression is implemented**. A wrong transition changes which
+playbook the Prompt Assembler expands into the prompt, so routing must not
+oscillate or look reversible without an explicit contract. No confirmation
+requirement is added unless existing Core workflow content already requires one;
+**no new confirmation policy is created**. Consultation is the **last workflow
+this ruling routes to**; what follows its completion is the terminal action
+described in the amendment below, not a further transition.
+
+**Nothing else moves.** `WorkflowState` and `WorkflowTransitionDecision` are
+unchanged, with no new fields; `collected_data` stays `{}` unless an existing
+contract independently requires otherwise; transitions persist through the
+existing `WorkflowStateManager` and transition-history behaviour is preserved.
+Routing keeps its **post-response position** in the §14 pipeline — it is not
+moved before the Provider, no second Provider call is added, and no other stage
+ordering changes.
+
+**Explicitly excluded, with their reasons:**
+
+* **`crm_sync`** — its Decision Point is *"If synchronization succeeds"*, which
+  needs a tool result `route()` is not given. Coupled to **TE-5 / TE-1**, both
+  of which stay open and unamended.
+* **`voice_agent`** — it triggers on the conversation's channel, which §6.6 does
+  not pass to `route()`. **AUDIT-5** stays open and unamended.
+
+**No other issue is resolved by this work.** TE-1, TE-2, TE-3, TE-5, TE-6, TE-7,
+RE-1, RE-3, RE-5, AUDIT-3, AUDIT-5, AUDIT-6 and V-7 are untouched — only WR-1
+may be closed by it.
+
+**WR-1 may close only when all of these hold:** Core workflow files carry
+authoritative machine-consultable rules for the **two** authorized transitions;
+`WorkflowRouter.route()` evaluates the latest message against them; **both**
+transitions are demonstrated end to end; ambiguous or non-matching input
+preserves the current workflow; no automatic regression exists; **every
+`WorkflowTransitionDecision` names a workflow that exists in `CoreBundle`, and
+no decision ever targets `submit`**; no Provider dependency exists in the
+routing implementation; workflow state stays compatible with the existing model
+and gains no new field; §6.9 and §6.10 remain intact; §6.12(c) purity and
+§6.12(d) playbook isolation remain intact; `crm_sync` and `voice_agent` remain
+explicitly out of scope; the full regression suite passes; and no unrelated
+Architecture Issue is closed or amended.
+
+**On the tests that pin the gap:** `test_no_machine_checkable_transition_rule_
+exists_in_core` and `test_the_router_documents_that_it_cannot_advance_a_
+conversation` were written to fail the day rules were authored. They may be
+retired or inverted **only** so far as the authorized implementation requires.
+No unrelated test may be weakened.
+
+---
+
+#### Amendment, 2026-09-05 — `submit` is not a workflow, and the third transition is withdrawn
+
+**Cause: a §6.10 target verification performed before implementation
+authorization.** The ruling above, as first ratified, named a third transition
+**consultation → submit**. That target does not exist.
+
+**Evidence.** `core/workflows/` holds six files and `CoreBundle.workflows` six
+keys — `consultation`, `crm_sync`, `discovery`, `follow_up`, `recommendation`,
+`voice_agent`. `framework_spec.py`'s `CANONICAL_WORKFLOWS` lists the same six,
+sourced from `core/templates/config.md`'s *"The six available workflows are…"*.
+Asking the committed router to target `submit` raises `UndefinedWorkflowError`:
+*"Cannot route to workflow 'submit': it is not defined in Core."* A
+`consultation → submit` decision would therefore violate **§6.10 on every
+attempt** — the clause the same ruling requires to stay intact.
+
+**What "Submit" actually is.** Every occurrence of the word in `core/workflows/`
+is an action or an event, never a destination: `consultation.md`'s Decision
+Point *"➡ Submit the consultation request"*, beside *"Update the information and
+confirm again"* and *"end the workflow professionally"* — neither of which is a
+workflow either; and the Triggers of `crm_sync` (*"A consultation request is
+submitted"*) and `follow_up` (*"A consultation request has been submitted."*).
+`consultation.md`'s Outputs confirm the shape: *"Complete consultation request ·
+Qualified lead · Ready for CRM or business follow-up."* **Submitting is how
+Consultation completes.**
+
+**Amended scope.** The immediate WR-1 implementation scope is exactly:
+
+1. **discovery → recommendation** — a workflow transition;
+2. **recommendation → consultation** — a workflow transition;
+3. **Consultation's completion action, *"Submit the consultation request"*** —
+   **a terminal action, not a workflow target**, and outside
+   `WorkflowTransitionDecision` semantics for WR-1.
+
+**For item 3, none of the following is authorized:** creating a `submit`
+workflow; adding `submit` to `CoreBundle.workflows`; creating a new
+`WorkflowTransitionDecision` target; routing Consultation to `crm_sync`;
+routing Consultation to `follow_up`; implementing `crm_sync` or `follow_up`
+routing; or inventing a terminal workflow or completion state. Re-targeting the
+transition at `crm_sync` or `follow_up` was considered and **rejected**: both
+are valid §6.10 targets, but both are driven by the submission *event* rather
+than by a customer message, and both collide with **TE-5 / TE-1**, which this
+ruling excludes and does not amend.
+
+**This amendment introduces no new contract.** `WorkflowState` and
+`WorkflowTransitionDecision` are not redefined, no completion-state contract is
+created, and no new field is added. **What can be proven about Consultation
+completion using only the existing contracts is an open question for the
+implementation audit to answer** — and if the honest answer is "nothing beyond
+what already exists", item 3 is recorded as such rather than built.
+
+**Unaffected.** Everything else in the ruling above stands: the Core-authored
+deterministic strategy, the prohibition on a Provider call, the authority
+location, §6.9's conservative fallback, one-way progression with no automatic
+regression, the untouched state models, the post-response §14 position, and the
+`crm_sync` / `voice_agent` exclusions.
+
+**Test requirements, amended accordingly.** Coverage must prove: both authorized
+transitions occur from Core-authored message rules; non-matching or ambiguous
+messages preserve the current workflow; no automatic regression occurs;
+`route()` actually consults the latest message; the runtime holds no independent
+authoritative routing vocabulary; no Provider call occurs for routing; **no
+decision ever names `submit` or any workflow absent from `CoreBundle`**; §6.10,
+§6.12(c) and §6.12(d) remain intact; `crm_sync` and `voice_agent` stay out of
+scope; and an end-to-end run through `activate()` demonstrates a real multi-turn
+transition.
+
+**WR-1 remains OPEN.** No implementation is authorized by this amendment.
+
+---
+
+#### Amendment, 2026-09-05 (second) — AMB-1 and AMB-2 ruled; final WR-1 scope
+
+**Cause: the WR-1 implementation audit**, which found two contract ambiguities
+the ruling above did not anticipate. Both are now ruled.
+
+**AMB-1 — Discovery → Recommendation: AUTHORIZED, narrowly.**
+
+The existing Decision Point, *"If sufficient information has been collected"*, is
+**state-oriented**, and the `WorkflowState` contract provides no collected-data
+semantics able to evaluate it — `collected_data` is permanently `()` because the
+Router returns `{}` on every decision (D-3), which this ruling does not reopen.
+
+Core is therefore authorized to publish an **explicit, message-shaped readiness
+vocabulary** in `core/workflows/discovery.md`, as an *additional* Core-authored
+routing signal for the existing Decision Point. **This must be documented for
+what it is**: the deterministic routing representation available under the
+current runtime contract — **not** a machine-readable evaluation of accumulated
+`collected_data`, and it must not be presented as one. The existing prose
+Decision Point remains authoritative as the conceptual workflow rule.
+
+Constraints, all of them: authority stays in `core/workflows/discovery.md`; the
+runtime reads and evaluates but **never defines its own readiness phrases or
+routing policy**; authority does not move into `runtime/` or
+`projects/*/config.md`; **no `collected_data` extraction**; **no change to
+`WorkflowState` or `WorkflowTransitionDecision`**; **no Provider/LLM semantic
+classification**; **no confidence threshold**; case-insensitive deterministic
+matching is permitted, following the **GE-1 Core-vocabulary precedent**; and a
+non-matching or ambiguous message preserves the current workflow (§6.9).
+
+**AMB-2 — Consultation completion: DO NOT IMPLEMENT UNDER WR-1.**
+
+The audit established that the repository has **no runtime contract** for
+Consultation completion. It is registered separately as **WR-2** below and is
+**out of scope for WR-1**. None of the following is authorized here: a `submit`
+workflow, a terminal state, a `WorkflowState` or `WorkflowTransitionDecision`
+change, a completion event, a `ToolRequest` producer, a `consultation_form`
+change, or `crm_sync`/`follow_up` routing.
+
+**Final WR-1 scope:**
+
+1. **discovery → recommendation**, using the newly authorized Core-owned
+   message-shaped readiness vocabulary;
+2. **recommendation → consultation**, using Core-owned deterministic acceptance
+   vocabulary;
+3. **Consultation completion — not implemented**, explicitly deferred to
+   **WR-2**. **WR-1 must not claim Consultation completion is implemented.**
+
+**Final WR-1 closure criteria.** WR-1 may close once: both transitions work end
+to end; both use Core-authored deterministic vocabulary; `latest_message` is
+actually evaluated; non-matching or ambiguous messages preserve the current
+workflow; no automatic regression is introduced; no Provider/LLM dependency
+exists; §6.9, §6.10, §6.12(c) and §6.12(d) remain intact; §14's post-response
+routing position is unchanged; **no new `WorkflowState` or
+`WorkflowTransitionDecision` fields** are introduced; **no `submit` workflow
+exists or is required**; Consultation completion is explicitly recorded as out
+of scope and separately tracked as **WR-2**; the full regression suite passes;
+and no unrelated Architecture Issue is closed or amended.
+
+**WR-1 remains OPEN.** No implementation is authorized by this amendment.
+
+---
+
+#### ✅ **RESOLVED 2026-09-05 — WR-1 implemented as ruled**
+
+`discovery.md` and `recommendation.md` each carry a **`## Routing Phrases`**
+section declaring itself the authoritative source, with one `###` subsection per
+target workflow holding a bullet phrase list. `WorkflowRouter.route()` reads the
+**active** workflow's section and matches the latest message
+case-insensitively; `del latest_message` is gone.
+
+**The vocabulary is derived, not transcribed.** The router reads Core per call,
+so editing a document changes routing with no Python to keep in step —
+`test_wr1_the_router_follows_core_when_core_changes` proves it by substituting a
+document with a different phrase, and
+`test_wr1_no_routing_phrase_is_authoritative_in_python` proves no phrase is
+written in `router.py`. Module 6 gained **no new import**: `core_bundle` was
+already a `route()` parameter and the Core Loader already provides
+section-addressable access, so §6.7's dependency set is unchanged.
+
+**No ordering policy in Python (H-2 as ruled).** The runtime holds exactly one
+routing constant, `_ROUTING_SECTION` — an *address*. A subsection's heading names
+its own target, so the permitted progression is entirely Core-declared.
+`test_wr1_the_router_holds_no_workflow_ordering_policy` asserts, over executable
+string values only, that `router.py` names no workflow but `discovery` (R-1's
+first-turn choice), and `test_wr1_no_published_target_is_regressive` asserts that
+no Core document publishes a backward target. `recommendation.md` deliberately
+publishes no `### discovery` subsection; its *"If new business needs emerge"*
+branch stays prose.
+
+**What `discovery.md`'s vocabulary is, per AMB-1.** The section states in its own
+words that the Decision Point *"If sufficient information has been collected"*
+remains the authoritative conceptual rule, that the runtime cannot evaluate it
+because nothing extracts collected data, and that the phrases are a
+**message-shaped readiness signal — not a machine-readable evaluation of
+accumulated `collected_data`, and not to be presented as one**. `collected_data`
+remains `{}` on every decision, including a transition (D-3 untouched).
+
+**H-1, recorded honestly — and it is worse than the ruling anticipated.**
+
+* **Router → Module 7 is proven for both transitions.**
+  `test_wr1_the_seam_carries_a_real_transition_through_module_seven` walks a
+  conversation `discovery → recommendation → consultation` through the real
+  `WorkflowStateManager`, with `transition_history` recording both.
+* **No activatable fixture can execute *either* transition end to end.**
+  `fixture_clinic` is the only project that passes validation, and it enables
+  `discovery` and `consultation` only. Discovery's published target is
+  `recommendation`, which the fixture does not enable, so an advanced
+  conversation degrades at the Prompt Assembler's project-scope check on the
+  next turn — verified, and pinned by
+  `test_wr1_no_activatable_fixture_can_execute_a_transition_end_to_end`, which
+  fails the day a fixture enables Recommendation. `sunrise_dental_clinic` enables
+  all six but fails validation; `orbitlance` fails with eleven issues.
+* **This is fixture coverage, not an implementation failure**, and per the H-1
+  ruling no project configuration or fixture was altered to manufacture a path.
+* **What `activate()` does prove:** the router runs on every turn and receives
+  the real message; §6.9's conservative default holds through the whole
+  pipeline; and another workflow's vocabulary does not move this one.
+
+**Unchanged and still open:** **WR-2** (Consultation completion has no runtime
+contract), **TE-1 / TE-5**, **AUDIT-5**, **AUDIT-3**, **RE-5**, **AUDIT-6**, and
+every other issue. `crm_sync` and `voice_agent` publish no routing section and
+remain out of scope. No `submit` workflow exists, and
+`test_wr1_no_decision_ever_targets_submit` asserts no decision ever names one.
+
+Proven by seventeen tests across `tests/workflow_router/` and
+`tests/runtime_engine/`. Four existing tests were **transformed, not deleted** —
+the two written to fail the day rules were authored, the message-content case
+(which kept every message whose premise still holds and now pins that a
+workflow routes only on what *it* publishes), and the extraction-rules scan
+(narrowed to pattern/scoring/threshold machinery, with the stronger
+no-vocabulary-in-Python guarantee asserted separately).
+
+---
+
+### WR-2 — Consultation completion has no runtime contract; "submit the consultation request" is prose only
+
+**Class: Architecture Issue** · Registered 2026-09-05, carved out of WR-1 by the
+AMB-2 ruling. **Explicitly out of scope for WR-1**, which must not claim to
+implement it.
+
+`core/workflows/consultation.md`'s Decision Points read:
+
+> *"If the customer confirms the information: ➡ **Submit the consultation
+> request.**"*
+
+alongside *"Update the information and confirm again"* and *"end the workflow
+professionally"* — none of which is a workflow. Its Outputs describe the same
+completion: *"Complete consultation request · Qualified lead · Structured
+customer information · Ready for CRM or business follow-up."*
+
+**Submitting is how the Consultation workflow completes. Nothing in the runtime
+represents that completion.** Established by the WR-1 implementation audit:
+
+| Contract | State at HEAD |
+|---|---|
+| **`WorkflowState`** | Four fields — `conversation_id`, `active_workflow`, `collected_data`, `transition_history`. **No terminal, completed or status field.** `SessionStatus` (active/idle/expired) is §12 session lifecycle, not §7 workflow completion, and is not reusable |
+| **`WorkflowTransitionDecision`** | Two fields; `target_workflow: str` is **required and non-optional**, and §6.10 requires it to name a workflow that exists in `CoreBundle`. There is no null, terminal or "no transition" value, so a completion cannot be expressed as a decision |
+| **`core/tools/consultation_form.md`** | Declares *"Submit consultation requests"* and *"Return submission status"* — the one contract that would represent submission. It has **no implementation**: `ToolExecutor().registered_contracts()` is empty |
+| **`ToolRequest` producer** | **None.** Nothing in `runtime/` constructs one — this is **TE-1**, and `ToolStage` is *"a typed no-op until a producer exists"* |
+
+**There is no `submit` workflow, and none may be invented.** `core/workflows/`
+holds exactly six files and `CoreBundle.workflows` six keys — `consultation`,
+`crm_sync`, `discovery`, `follow_up`, `recommendation`, `voice_agent` —
+matching `framework_spec.py`'s `CANONICAL_WORKFLOWS`. Targeting `submit` raises
+`UndefinedWorkflowError`, so a `consultation → submit` decision would violate
+§6.10 on every attempt. That is why WR-1's third transition was withdrawn.
+
+**Why this is not simply TE-1.** TE-1 records that `ToolRequest` has no writer.
+WR-2 is the prior question: *what does it mean, in this runtime, for a workflow
+to finish?* Even with a `ToolRequest` producer, nothing would mark the
+Consultation workflow complete — `active_workflow` would still name
+`consultation` forever. The two are **coupled and distinct**, and neither closes
+the other.
+
+**Related:** **TE-1 / TE-5** — a tool producer and a result path are necessary
+but not sufficient. **WR-1** — carved out of it; WR-1 closes without this.
+**AUDIT-3** — `transition_history` no-op growth is a symptom of the same absent
+notion of a workflow ending. **`crm_sync` / `follow_up`** — both trigger on *"a
+consultation request is/has been submitted"*, so both are downstream consumers
+of the event this issue records as unrepresented.
+
+**To close it:** a ruling on how a completed workflow is represented — a
+terminal value or status on `WorkflowState`, a decision shape that can express
+"no further workflow", or an explicit statement that completion is the channel
+adapter's concern and the runtime models none — followed by whichever of those
+the ruling selects, and a demonstration that a Consultation conversation reaching
+confirmation is distinguishable at runtime from one still in progress.
 
 ---
 

@@ -107,6 +107,36 @@ Otherwise:
 
 ---
 
+## Routing Phrases
+
+**This section is the authoritative source of the runtime's deterministic routing vocabulary for this workflow.** The Workflow Router reads the phrases below from this document; it never defines them in code. Adding, removing or rewording a phrase here changes routing behaviour, and is a deliberate Core-content change.
+
+**What this vocabulary is, stated precisely.** The Decision Point above — *"If sufficient information has been collected"* — remains the authoritative conceptual rule, and it is a judgement about accumulated information. The runtime cannot evaluate it: nothing extracts collected data from a conversation, so there is nothing to measure sufficiency against. The phrases below are therefore a **message-shaped readiness signal**: the deterministic routing representation available under the current runtime contract. **They are not a machine-readable evaluation of accumulated collected data, and must not be presented as one.** The agent still follows the Decision Point; this vocabulary only tells the deterministic router when a customer has plainly signalled they are ready to move on.
+
+Matching is case-insensitive, and a matched phrase advances the conversation. A message matching nothing keeps the conversation in this workflow — the conservative default.
+
+Each subsection heading below names the workflow the phrases route to.
+
+### recommendation
+
+- what do you recommend
+- what would you recommend
+- what do you suggest
+- what would you suggest
+- which option is best
+- which do you recommend
+- show me the options
+- what are my options
+- I am ready to move forward
+- I'm ready to move forward
+- ready for a recommendation
+- that is everything
+- that's everything
+- that is all the information
+- that's all the information
+
+---
+
 ## Best Practices
 
 - Ask one question at a time.
