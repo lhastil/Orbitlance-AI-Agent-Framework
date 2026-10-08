@@ -12,13 +12,13 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Twelve open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
-RE-3, RE-5, AUDIT-6, WR-2, WR-3**, recorded during Modules 10, 11, 14 and 15,
-the §14 post-implementation audit, the Step 4 roadmap audit of 2026-09-05, the
-WR-1 implementation audit of the same day, and the workflow-scope (ROOT-C) audit
-of 2026-10-08; WR-3's design is ruled and awaits implementation. **RE-8**,
-registered with the `RuntimeResponse.escalate` semantics ruling of 2026-10-08,
-**closed on 2026-10-08**.
+**Eleven open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
+RE-3, RE-5, AUDIT-6, WR-2**, recorded during Modules 10, 11, 14 and 15,
+the §14 post-implementation audit, the Step 4 roadmap audit of 2026-09-05, and
+the WR-1 implementation audit of the same day. **RE-8**, registered with the
+`RuntimeResponse.escalate` semantics ruling of 2026-10-08, **closed on
+2026-10-08**. **WR-3**, registered with the workflow-scope (ROOT-C) ruling of
+2026-10-08, **closed on 2026-10-08**.
 **WR-1 and GE-1 are not new defects** — both were disclosed in source and in
 README from their own module milestones, and both are pinned by tests; what they
 lacked until 2026-09-05 was a register identifier, an owner and a closure
@@ -114,7 +114,7 @@ one class.
 | **OB-3** | **§15.9 audit-gap alert has no seam** | **Closed** — alert raised at §14's containment guard |
 | **WR-1** | **§6.2's message-driven routing is not implemented; no conversation advances past its first workflow** | **Closed** — two transitions on Core-published vocabulary |
 | **WR-2** | **Consultation completion has no runtime contract; "submit" is prose only** | **Architecture Issue** |
-| **WR-3** | **Nothing enforces a project's workflow scope; a conversation can be committed to a workflow the project has not enabled** | **Architecture Issue** — design ruled, not implemented |
+| **WR-3** | **Nothing enforces a project's workflow scope; a conversation can be committed to a workflow the project has not enabled** | **Closed** — activation checks plus a commit-time scope gate |
 | **GE-1** | **§8.2's pre-flight content scan is not implemented; no inbound message is checked** | **Closed** — two conditions enforced from Core vocabulary |
 | **PA-4** | **§4 cites an assembly order in a section that does not exist** | **Documentation / Reporting** |
 | **PA-5** | **Playbook provenance check inspected only the first source** | **Closed** |
@@ -2897,7 +2897,8 @@ its approved design.
 ### WR-3 — Nothing enforces a project's workflow scope; a conversation can be committed to a workflow the project has not enabled
 
 **Class: Architecture Issue** · Registered 2026-10-08 (audit reference ROOT-C).
-**Open; design ruled (below), not implemented.**
+✅ **CLOSED 2026-10-08** — see the resolution note after the ruling below. The
+description that follows is the state as registered, retained for history.
 
 The frozen specification assigns project workflow scope to no module, and
 `WorkflowNotEnabledError` says so. The Router cannot see what a project enabled
@@ -2982,6 +2983,44 @@ routing and who decides when a tool is called (TE-1); customer-data ownership;
 channel-specific first-workflow selection; audit payload changes; dependency-model
 changes; customer wording (RE-5); concurrency (RE-3); escalation policy
 (AUDIT-6); provider validation (PR-1); the §8.12(a) / GE-1 tension.
+
+#### ✅ **RESOLVED 2026-10-08 — WR-3 implemented as ruled**
+
+Implemented in commit `f620a7f`.
+
+**At activation**, two Validation Layer rules: `CONF008` (ERROR) rejects a
+project whose effective enabled set does not include the first-turn workflow,
+`discovery`, so such a project cannot activate; `CONF009` (WARNING) reports each
+routing target an enabled workflow publishes under `Routing Phrases` that the
+project has not enabled, and the project still activates. The enabled set is
+derived exactly as the Resolver derives it — nothing declared enables every
+workflow; otherwise only the declared labels that name a Core workflow — and
+targets are read from Core documents as the Router reads them, never from a
+list in Python. Core `Dependencies` enable nothing.
+
+**At runtime**, `WorkflowStage` checks the Router's `target_workflow` against
+`ResolvedContext.config.enabled_workflows` between `route()` and
+`commit_transition()`. An out-of-scope target is refused: nothing is committed,
+no history entry is written, the current workflow is preserved, and the
+generated answer is delivered. The turn is not degraded, and the refusal never
+alters `RuntimeResponse.escalate`. No module call, `TurnState` field or stage was
+added; the Router and the State Manager are unchanged, and the Prompt
+Assembler's `WorkflowNotEnabledError` remains the backstop.
+
+Because the Validation Layer may not depend on the Router or the Resolver
+(§13.7), the first-turn workflow and the `Routing Phrases` section name are
+transcribed in `framework_spec.py`; alignment tests keep them, the enabled-set
+derivation and the routing-target reading equal to the runtime's.
+
+Proven by twenty-nine new tests across `tests/runtime_engine/`,
+`tests/validation/` and `tests/test_vocabulary_alignment.py`; twenty-six fail
+against the unfixed implementation. `test_1_the_fixture_project_passes_activation`
+now expects the fixture's one `CONF009` WARNING. Full offline suite: **1133
+passed, 16 skipped**.
+
+**Unchanged and still open:** WR-2, the remaining tool and customer-data
+ownership questions, AUDIT-6, RE-5, PR-1, the §8.12(a) / GE-1 tension, and every
+other issue.
 
 ---
 

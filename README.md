@@ -51,7 +51,7 @@ Alongside module 9, one concrete provider adapter is implemented: **Google Gemin
 
 ### Verification
 
-- **1104 passed, 16 skipped** in the offline suite, with the `gemini` extra installed — no credential or network required. The 16 skipped are the live Gemini tests below, which the offline suite excludes. Without the extra, the 102 offline Gemini adapter tests are skipped as well.
+- **1133 passed, 16 skipped** in the offline suite, with the `gemini` extra installed — no credential or network required. The 16 skipped are the live Gemini tests below, which the offline suite excludes. Without the extra, the 102 offline Gemini adapter tests are skipped as well.
 - **16 / 16 live Gemini tests passing** against the real API. These are opt-in and are excluded from the offline suite.
 
 ## Repository structure
