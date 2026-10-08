@@ -1829,3 +1829,225 @@ def test_no_prior_architecture_issue_was_silently_closed(issue: str) -> None:
         encoding="utf-8"
     )
     assert issue in register
+
+
+# =============================================================================
+# RE-8 — an escalation verdict survives every way a turn can end
+# =============================================================================
+class _Failing:
+    """A collaborator double whose every method raises."""
+
+    def __getattr__(self, name: str):
+        def fail(*args: object, **kwargs: object) -> None:
+            del args, kwargs
+            raise RuntimeError(f"injected failure in {name}")
+
+        return fail
+
+
+class _FailingStage:
+    """Stands in for one named stage and raises when run."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def run(self, state: TurnState) -> None:
+        del state
+        raise RuntimeError(f"injected failure in the {self.name} stage")
+
+
+def _stage(engine: RuntimeEngine, name: str):
+    return next(s for s in engine._pipeline if s.name == name)  # noqa: SLF001
+
+
+def _replace_stage(engine: RuntimeEngine, name: str, replacement) -> None:
+    engine._pipeline = tuple(  # noqa: SLF001
+        replacement if s.name == name else s for s in engine._pipeline  # noqa: SLF001
+    )
+
+
+def _fail_collaborator(stage_name: str, attribute: str):
+    def inject(engine: RuntimeEngine) -> None:
+        setattr(_stage(engine, stage_name), attribute, _Failing())
+
+    return inject
+
+
+#: Every turn-ending path that lost an escalation verdict before RE-8, as
+#: (id, adapter keyword arguments, fault injection, the expected failed stage).
+#: The last two are not reachable through the production pipeline, so they use
+#: test substitution; the frozen invariant covers them all the same.
+RE8_PATHS = [
+    ("prompt_assembly", {"window": 300, "reserve": 10}, None, "prompt_assembly"),
+    ("provider", {"fail_with": ProviderRateLimitError("throttled")}, None, "provider"),
+    ("post_response_block", {"text": "That costs $9999."}, None, None),
+    ("router", {}, _fail_collaborator("workflow", "_router"), "workflow"),
+    ("state_commit", {}, _fail_collaborator("workflow", "_states"), "workflow"),
+    ("delivery", {}, _fail_collaborator("delivery", "_sessions"), "delivery"),
+    (
+        "post_response_raise",
+        {},
+        _fail_collaborator("post_response_guardrail", "_guardrails"),
+        "post_response_guardrail",
+    ),
+    (
+        "tool_stage",
+        {},
+        lambda engine: _replace_stage(engine, "tool", _FailingStage("tool")),
+        "tool",
+    ),
+]
+
+
+def _run_re8_path(core, context, message, adapter_kwargs, inject):
+    sink = RecordingSink()
+    engine, _, _ = build_engine(
+        core, context, adapter=FixtureAdapter(**adapter_kwargs), observability=sink
+    )
+    if inject is not None:
+        inject(engine)
+    response = engine.handle_request(request(message))
+    assert len(sink.logged) == 1
+    return response, sink.logged[0]
+
+
+@pytest.mark.parametrize(
+    ("adapter_kwargs", "inject", "failed_stage"),
+    [path[1:] for path in RE8_PATHS],
+    ids=[path[0] for path in RE8_PATHS],
+)
+def test_re8_a_pre_flight_escalation_survives_every_turn_ending_path(
+    core: CoreBundle,
+    fixture_context: ResolvedContext,
+    adapter_kwargs: dict,
+    inject,
+    failed_stage: str | None,
+) -> None:
+    """A stored pre-flight verdict reaches the final response and the audit.
+
+    Run once with an escalating message and once with an ordinary one down the
+    same path: the two outcomes must differ in `escalate` and in nothing else.
+    That is the whole of RE-8 — propagation, never a change to `blocked`,
+    `degraded`, `text`, the event type or `failed_stage`.
+    """
+    escalated, escalated_event = _run_re8_path(
+        core, fixture_context, escalating_message(), adapter_kwargs, inject
+    )
+    ordinary, ordinary_event = _run_re8_path(
+        core, fixture_context, "What do you offer?", adapter_kwargs, inject
+    )
+
+    # The frozen definition, both directions.
+    assert escalated.escalate, "a pre-flight escalation verdict was lost"
+    assert not ordinary.escalate, "a failure must never create escalation"
+
+    # Nothing but `escalate` differs, and the path really was the one named.
+    assert (escalated.text, escalated.blocked, escalated.degraded) == (
+        ordinary.text,
+        ordinary.blocked,
+        ordinary.degraded,
+    )
+    assert escalated_event.type == ordinary_event.type
+    assert escalated_event.payload.get("failed_stage") == failed_stage
+    assert ordinary_event.payload.get("failed_stage") == failed_stage
+    assert set(escalated_event.payload) == set(ordinary_event.payload)
+
+    # The audit records the final response's fact.
+    for response, event in ((escalated, escalated_event), (ordinary, ordinary_event)):
+        assert event.payload["escalate"] == str(response.escalate)
+
+
+def test_re8_a_completed_escalating_turn_is_unchanged(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """On a turn that completes, normalization has nothing to add."""
+    response, event = _run_re8_path(
+        core, fixture_context, escalating_message(), {}, None
+    )
+    assert response == RuntimeResponse(text=ANSWER, escalate=True)
+    assert event.type == "runtime.turn_completed"
+    assert event.payload["escalate"] == "True"
+
+
+def test_re8_a_fail_closed_post_response_verdict_escalates(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """The Guardrail Engine's own fail-closed verdict at post-response."""
+    sink = RecordingSink()
+    engine, _, _ = build_engine(core, fixture_context, observability=sink)
+    stage = _stage(engine, "post_response_guardrail")
+    stage._guardrails = GuardrailEngine(CoreBundle())  # noqa: SLF001
+    response = engine.handle_request(request())
+    assert response.blocked and response.escalate and not response.text
+    assert sink.logged[0].payload["escalate"] == "True"
+
+
+def test_re8_a_stored_post_response_verdict_survives_a_later_failure(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """The engine reads the post-response verdict as well as the pre-flight one.
+
+    No production post-response verdict escalates without blocking, so the
+    verdict is substituted; the router then fails after it was recorded.
+    """
+    from runtime.models.guardrail import Checkpoint, GuardrailResult
+
+    class EscalatingPostResponse:
+        name = "post_response_guardrail"
+
+        def run(self, state: TurnState) -> None:
+            state.post_response = GuardrailResult(
+                checkpoint=Checkpoint.POST_RESPONSE, escalate=True
+            )
+
+    sink = RecordingSink()
+    engine, _, _ = build_engine(core, fixture_context, observability=sink)
+    _replace_stage(engine, "post_response_guardrail", EscalatingPostResponse())
+    _fail_collaborator("workflow", "_router")(engine)
+    response = engine.handle_request(request())
+    assert response.escalate and response.degraded
+    assert sink.logged[0].payload["escalate"] == "True"
+    assert sink.logged[0].payload["failed_stage"] == "workflow"
+
+
+def test_re8_the_no_outcome_path_preserves_escalation(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """Reachable only by substituting the pipeline. Escalation only — no
+    contract is made here for `text`, `blocked` or `degraded`."""
+    engine, _, _ = build_engine(core, fixture_context)
+    engine._pipeline = tuple(  # noqa: SLF001
+        s for s in engine._pipeline if s.name != "delivery"  # noqa: SLF001
+    )
+    assert engine.handle_request(request(escalating_message())).escalate
+
+
+def test_re8_only_the_engine_owns_escalation_propagation() -> None:
+    """Structural: the final guarantee lives in `handle_request` alone.
+
+    Only the two guardrail stages and `DeliveryStage` read `.escalate` in
+    `stages.py` — exactly as before RE-8 — and `handle_request` reads both
+    recorded verdicts.
+    """
+    tree = ast.parse((PACKAGE / "stages.py").read_text(encoding="utf-8"))
+    readers = {
+        cls.name
+        for cls in tree.body
+        if isinstance(cls, ast.ClassDef)
+        for node in ast.walk(cls)
+        if isinstance(node, ast.Attribute) and node.attr == "escalate"
+    }
+    assert readers == {
+        "PreFlightGuardrailStage",
+        "PostResponseGuardrailStage",
+        "DeliveryStage",
+    }
+
+    engine_tree = ast.parse((PACKAGE / "engine.py").read_text(encoding="utf-8"))
+    handler = next(
+        node
+        for node in ast.walk(engine_tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "handle_request"
+    )
+    attributes = {n.attr for n in ast.walk(handler) if isinstance(n, ast.Attribute)}
+    assert {"pre_flight", "post_response", "escalate"} <= attributes

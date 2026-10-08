@@ -319,6 +319,22 @@ class RuntimeEngine:
             failed_stage = failed_stage or "pipeline"
             outcome = RuntimeResponse(degraded=True)
 
+        # RE-8: `escalate` is True iff a Guardrail Engine checkpoint returned
+        # escalate=True this turn, however the turn ended. A contained failure
+        # or a post-response block builds a fresh outcome that would otherwise
+        # drop an earlier verdict. Only False -> True; nothing else changes, and
+        # a failure never creates escalation (that question is AUDIT-6).
+        if not outcome.escalate and any(
+            verdict is not None and verdict.escalate
+            for verdict in (state.pre_flight, state.post_response)
+        ):
+            outcome = RuntimeResponse(
+                text=outcome.text,
+                blocked=outcome.blocked,
+                escalate=True,
+                degraded=outcome.degraded,
+            )
+
         self._observe_outcome(request, outcome, failed_stage)
         return outcome
 
