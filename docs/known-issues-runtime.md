@@ -12,12 +12,13 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Eleven open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
-RE-3, RE-5, AUDIT-6, WR-2**, recorded during Modules 10, 11, 14 and 15,
-the §14 post-implementation audit, the Step 4 roadmap audit of 2026-09-05, and
-the WR-1 implementation audit of the same day. **RE-8**, registered with the
-`RuntimeResponse.escalate` semantics ruling of 2026-10-08, **closed on
-2026-10-08**.
+**Twelve open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
+RE-3, RE-5, AUDIT-6, WR-2, WR-3**, recorded during Modules 10, 11, 14 and 15,
+the §14 post-implementation audit, the Step 4 roadmap audit of 2026-09-05, the
+WR-1 implementation audit of the same day, and the workflow-scope (ROOT-C) audit
+of 2026-10-08; WR-3's design is ruled and awaits implementation. **RE-8**,
+registered with the `RuntimeResponse.escalate` semantics ruling of 2026-10-08,
+**closed on 2026-10-08**.
 **WR-1 and GE-1 are not new defects** — both were disclosed in source and in
 README from their own module milestones, and both are pinned by tests; what they
 lacked until 2026-09-05 was a register identifier, an owner and a closure
@@ -113,6 +114,7 @@ one class.
 | **OB-3** | **§15.9 audit-gap alert has no seam** | **Closed** — alert raised at §14's containment guard |
 | **WR-1** | **§6.2's message-driven routing is not implemented; no conversation advances past its first workflow** | **Closed** — two transitions on Core-published vocabulary |
 | **WR-2** | **Consultation completion has no runtime contract; "submit" is prose only** | **Architecture Issue** |
+| **WR-3** | **Nothing enforces a project's workflow scope; a conversation can be committed to a workflow the project has not enabled** | **Architecture Issue** — design ruled, not implemented |
 | **GE-1** | **§8.2's pre-flight content scan is not implemented; no inbound message is checked** | **Closed** — two conditions enforced from Core vocabulary |
 | **PA-4** | **§4 cites an assembly order in a section that does not exist** | **Documentation / Reporting** |
 | **PA-5** | **Playbook provenance check inspected only the first source** | **Closed** |
@@ -2882,6 +2884,104 @@ passed, 16 skipped**.
 
 **Unchanged and still open:** AUDIT-6, RE-5, the §8.12(a) / GE-1 tension, and
 every other issue.
+
+---
+
+## Registered with the workflow-scope (ROOT-C) ruling, 2026-10-08
+
+One gap, found during the post-RE-8 architecture triage, registered together with
+its approved design.
+
+---
+
+### WR-3 — Nothing enforces a project's workflow scope; a conversation can be committed to a workflow the project has not enabled
+
+**Class: Architecture Issue** · Registered 2026-10-08 (audit reference ROOT-C).
+**Open; design ruled (below), not implemented.**
+
+The frozen specification assigns project workflow scope to no module, and
+`WorkflowNotEnabledError` says so. The Router cannot see what a project enabled
+(§6.6 gives `route()` no `ResolvedContext`), the State Manager persists whatever
+it is given (§7.3, §7.4), and `WorkflowStage` commits the Router's decision
+without a scope check. The only check is the Prompt Assembler's, on the *next*
+turn — after the out-of-scope state is already committed, and before routing can
+run again. With no backward routing, the conversation then degrades on every
+later turn.
+
+Two reproduced consequences:
+
+* **A routed transition to a workflow the project has not enabled.**
+  `fixture_clinic` enables Discovery and Consultation; Discovery publishes a route
+  to Recommendation. A matching message commits Recommendation, and every later
+  turn degrades. WR-1's H-1 note records the first degraded turn; the degradation
+  is in fact permanent.
+* **A project without Discovery.** Validation does not require it, so the project
+  activates; `FIRST_TURN_WORKFLOW = "discovery"` is committed after the first
+  answer, and every conversation degrades from its second turn.
+
+`config.workflows_known` checks only that enabled names are canonical.
+
+**Related:** WR-1 (whose rulings are not changed by this entry), WR-2, and the
+Prompt Assembler's `WorkflowNotEnabledError`, which recorded the intent that
+*"the Runtime Engine is the primary gate"*.
+
+#### Ruling, 2026-10-08 — WR-3's workflow-scope invariant and its enforcement
+
+**Accepted architectural ruling. Ratified, not yet implemented. WR-3 stays open
+until implementation and verification are complete.**
+
+> **The Runtime Engine never commits a `WorkflowTransitionDecision` whose target
+> is not in the active project's `ResolvedContext.config.enabled_workflows`; and
+> no project activates unless its first-turn workflow, `discovery`, is enabled.**
+
+**Decisions, approved:**
+
+| | |
+|---|---|
+| **Scope source** | `ResolvedContext.config.enabled_workflows`, fixed for an activation, with the existing default of all six when `config.md` selects none |
+| **"Enabled"** | The workflows a project lists. Discovery is the one required workflow; this does **not** make any other workflow mandatory |
+| **First turn** | `FIRST_TURN_WORKFLOW = "discovery"` is unchanged. A project **must not activate** without Discovery. Selection stays channel-independent |
+| **Core `Dependencies`** | Describe runtime data and input consumption. They are **not** enablement dependencies, create **no** implicit enablement, and introduce **no** dependency closure. The dependency model is unchanged |
+| **Violation** | An out-of-scope transition is **refused**: no commit, no history entry, the current workflow is preserved, and the generated answer is delivered unchanged. The turn is not degraded, `RuntimeResponse` is unchanged, and scope enforcement never sets `RuntimeResponse.escalate` — escalation stays governed solely by the frozen Guardrail Engine semantics |
+
+**Enforcement approved for implementation:**
+
+* **At activation (Validation Layer):** an **ERROR** when Discovery is not
+  enabled; a **WARNING** for each routing target a project's enabled workflows
+  publish under `Routing Phrases` that the project has not enabled. Both are
+  derived from Core content, never from a hard-coded workflow list. The project
+  still activates with the WARNING.
+* **At commit (Runtime Engine, §14):** before any workflow transition is
+  committed, its target must belong to `enabled_workflows`; an invalid target is
+  refused as above.
+
+**Placement for the implementation:** inside `WorkflowStage`, after `route()` and
+before `commit_transition()`. No additional module call, no new `TurnState`
+field, and no change to the Router's or the State Manager's responsibility. The
+Prompt Assembler's `WorkflowNotEnabledError` remains a downstream backstop.
+
+**Authorization:** one §14 behavioural change (the commit-time check), by
+register ruling as for GE-1 and RE-8; the activation checks are additive
+Validation Layer rules. `docs/runtime-specification.md` is not changed.
+`WorkflowTransitionDecision`, `WorkflowState`, the Resolver's output, the §14
+stage order and WR-1's rulings are unchanged.
+
+**Observability.** The activation WARNING is configuration-time observability,
+not a runtime audit event; the audit payload and event shape are unchanged. It
+announces every out-of-scope target that today's Core-published routing can
+produce. **It is not a substitute for runtime observability of transitions that
+cannot be known at activation** — provider-backed, tool-driven or other dynamic
+producers would need a separate architectural decision.
+
+**Recovery:** none is required. Workflow and session stores are constructed per
+activation and config and Core are fixed within one, so no out-of-scope state
+can persist once the check exists.
+
+**Out of scope:** workflow completion (WR-2); provider-backed routing; tool-driven
+routing and who decides when a tool is called (TE-1); customer-data ownership;
+channel-specific first-workflow selection; audit payload changes; dependency-model
+changes; customer wording (RE-5); concurrency (RE-3); escalation policy
+(AUDIT-6); provider validation (PR-1); the §8.12(a) / GE-1 tension.
 
 ---
 
