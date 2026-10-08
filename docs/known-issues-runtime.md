@@ -12,10 +12,12 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Eleven open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
-RE-3, RE-5, AUDIT-6, WR-2**, recorded during Modules 10, 11, 14 and 15,
-the §14 post-implementation audit, the Step 4 roadmap audit of 2026-09-05, and
-the WR-1 implementation audit of the same day. **RE-8**, registered with the
+**Thirteen open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
+RE-3, RE-5, AUDIT-6, WR-2, RE-9, OB-4**, recorded during Modules 10, 11, 14 and
+15, the §14 post-implementation audit, the Step 4 roadmap audit of 2026-09-05,
+the WR-1 implementation audit of the same day, and the RE-5 customer-facing
+wording audit of 2026-10-08; RE-5's design is ruled and not implemented, and
+RE-9 and OB-4 were registered by that audit. **RE-8**, registered with the
 `RuntimeResponse.escalate` semantics ruling of 2026-10-08, **closed on
 2026-10-08**. **WR-3**, registered with the workflow-scope (ROOT-C) ruling of
 2026-10-08, **closed on 2026-10-08**.
@@ -98,10 +100,11 @@ one class.
 | **RE-2** | **`RuntimeRequest` / `RuntimeResponse` are framework-introduced** | **Documentation / Reporting** |
 | **RE-3** | **§14 establishes no concurrent runtime contract** | **Architecture Issue** |
 | **RE-4** | **The default runtime keeps no audit trail** | **Closed** — §15 implemented; durability is an activation invariant |
-| **RE-5** | **§14 composes no customer-facing fallback text** | **Architecture Issue** |
+| **RE-5** | **§14 composes no customer-facing fallback text** | **Architecture Issue** — design ruled, not implemented |
 | **RE-6** | **A blocked answer is not recorded as an agent turn** | **Documentation / Reporting** |
 | **RE-7** | **§14 publishes no camelCase alias; the convention is unsettled** | **Documentation / Reporting** |
 | **RE-8** | **A positive escalation verdict can be lost before the final `RuntimeResponse`** | **Closed** — final escalation normalization in `handle_request` |
+| **RE-9** | **An empty or error-classified `ProviderResponse` is delivered as a normal completed turn; no module classifies that provider outcome** | **Architecture Issue** |
 | **AUDIT-1** | **Budget and provider are never proven to describe the same model** | **Closed** — resolved globally |
 | **AUDIT-2** | **Cross-project session/workflow contamination via shared stores** | **AMENDED** — resolved for the production activation path; **open outside it** (constructor escape hatch remains) |
 | **AUDIT-3** | **`transition_history` grows with no-op entries** | **Runtime Improvement** |
@@ -112,6 +115,7 @@ one class.
 | **OB-1** | **Durable audit persistence** | **Closed** — production path wired to SQLite |
 | **OB-2** | **§15.12(d) duplicate-ID scenario cannot arise; not faked** | **Documentation / Reporting** |
 | **OB-3** | **§15.9 audit-gap alert has no seam** | **Closed** — alert raised at §14's containment guard |
+| **OB-4** | **The audit record omits a guardrail verdict's `reason` and `triggered_rule`** | **Architecture Issue** |
 | **WR-1** | **§6.2's message-driven routing is not implemented; no conversation advances past its first workflow** | **Closed** — two transitions on Core-published vocabulary |
 | **WR-2** | **Consultation completion has no runtime contract; "submit" is prose only** | **Architecture Issue** |
 | **WR-3** | **Nothing enforces a project's workflow scope; a conversation can be committed to a workflow the project has not enabled** | **Closed** — activation checks plus a commit-time scope gate |
@@ -1310,6 +1314,9 @@ replaced, not extended.
 ### RE-5 — §14 composes no customer-facing fallback text
 
 **Class: Architecture Issue.**
+**Design ruled — not implemented** (2026-10-08). The ruling is recorded under
+*"Registered with the RE-5 customer-facing wording ruling, 2026-10-08"* below;
+RE-5 is not closed by it. The original entry is retained unchanged.
 
 When a turn is blocked, or degraded by a contained failure,
 `RuntimeResponse.text` is empty and the flags carry the outcome; an escalating
@@ -3021,6 +3028,108 @@ passed, 16 skipped**.
 **Unchanged and still open:** WR-2, the remaining tool and customer-data
 ownership questions, AUDIT-6, RE-5, PR-1, the §8.12(a) / GE-1 tension, and every
 other issue.
+
+---
+
+## Registered with the RE-5 customer-facing wording ruling, 2026-10-08
+
+One ruling on an existing issue, and two new gaps found by the same read-only
+audit (run against commit `a2535d1`). The three are independent: neither new
+issue is part of RE-5, and neither may be fixed under it.
+
+---
+
+### Ruling, 2026-10-08 — RE-5: who owns customer-facing wording
+
+**Accepted architectural ruling. RE-5 is design ruled — not implemented. It is
+not closed.**
+
+**This is a documentation and ruling decision only.** No implementation is
+required inside the current framework for the ownership rule itself: the runtime
+already emits no customer-facing wording, and the owner of non-answer wording is
+outside this specification.
+
+1. **Answer turns.** When `RuntimeResponse.text` is non-empty, the model owns the
+   customer-facing wording. The framework delivers the model's text unchanged.
+2. **Non-answer turns.** When `RuntimeResponse.text == ""`, the framework does
+   not generate customer-facing wording.
+3. **Owner of non-answer wording.** The channel adapter — which consumes
+   `RuntimeResponse` and is outside this framework specification (§14.5, §14.8)
+   — owns customer-facing wording for non-answer turns.
+4. **What the channel adapter may rely on.** It may use the response flags
+   (`blocked`, `escalate`, `degraded`) to determine appropriate wording, but must
+   not claim a success, handoff, or cause that is not represented by those flags.
+5. **Providers** own model output, not customer-facing fallback wording.
+6. **Guardrail Engine** owns detection, attribution and blocking/escalation
+   decisions, not customer-facing wording (§8.3).
+7. **Runtime Engine** owns runtime outcome classification, not customer-facing
+   wording.
+8. **Guardrail reasons, exception messages and internal diagnostics are never
+   customer-facing text.**
+9. **Nothing is introduced.** The ruling adds no fallback catalogue, no second
+   provider generation pass, and no new `RuntimeResponse` fields.
+10. **Out of scope.** Tool-result wording, customer-data collection wording, and
+    handoff/channel behaviour after escalation are not covered and remain outside
+    RE-5's scope.
+
+**Unchanged:** `RuntimeResponse`, the Runtime Engine, the provider contract, the
+Guardrail Engine, `docs/runtime-specification.md`, and every other issue's
+ruling, including WR-3 and RE-8.
+
+---
+
+### RE-9 — An empty or error-classified `ProviderResponse` is delivered as a normal completed turn
+
+**Class: Architecture Issue** · Registered 2026-10-08 (RE-5 audit, finding F1).
+**Open.** A §14 / runtime outcome-semantics question. **This is not a wording
+problem**, and it is independent of RE-5.
+
+A `ProviderResponse` may currently carry empty text, an `error_type`, or both:
+
+* the Gemini adapter normalises a blocked or empty candidate to `text=""` and
+  returns it, with the comment that *"the Guardrail Engine and Runtime Engine
+  decide what to do with it"* — neither currently does;
+* the shared conformance suite accepts a returned `ProviderResponse` whose
+  `error_type` is set.
+
+`DeliveryStage` reads only `text`. Either response therefore produces a
+normal-looking `RuntimeResponse` with empty `text`, `blocked=False`,
+`escalate=False` and `degraded=False`. The turn is logged as
+`runtime.turn_completed`, and an empty agent turn is appended to the
+conversation. Reproduced on a scratch copy of `a2535d1` for both shapes.
+
+**What is undefined.** The architecture does not say who classifies this
+provider outcome, or whether it should become degraded, failed, blocked or
+something else.
+
+**This issue must be ruled before any behaviour change is implemented.** It
+must not be fixed as part of RE-5. No solution is proposed here.
+
+---
+
+### OB-4 — The audit record omits a guardrail verdict's `reason` and `triggered_rule`
+
+**Class: Architecture Issue** · Registered 2026-10-08 (RE-5 audit, finding F5).
+**Open.** An observability/audit issue — **not a customer-facing wording issue**,
+and separate from RE-5 and RE-9.
+
+`GuardrailResult.reason` exists, and §8.10 requires every block to carry one
+*"for observability and for constructing an honest, specific fallback"*, together
+with whether a Core guardrail or a project Operating Constraint triggered it
+(carried by `triggered_rule`). Both are useful for attribution and for fallback
+reasoning.
+
+The Runtime Engine's audit payload records `blocked`, `escalate`, `degraded`,
+`channel` and, on a contained failure, `failed_stage` — but **neither `reason`
+nor `triggered_rule`**. No other module records them. The observability purpose
+§8.10 describes for guardrail reasons is therefore not fully represented in the
+audit data.
+
+One fact any future decision must account for: an `engine.internal_failure`
+reason embeds the caught exception's text.
+
+**Not changed now:** audit structures, the audit payload and the Guardrail
+Engine. No fix is implemented and none is proposed here.
 
 ---
 
