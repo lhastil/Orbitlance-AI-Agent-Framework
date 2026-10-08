@@ -16,9 +16,11 @@ Engine is not their only reader — a channel adapter, out of this specification
 scope, consumes `RuntimeResponse` and produces `RuntimeRequest`.
 
 **`RuntimeResponse` carries no fallback text of its own.** When a turn is
-blocked, escalated or degraded, `text` is empty and the flags say what happened.
-Composing what a customer reads from `core/prompts/09_fallback_responses.md` is
-not something this runtime can do yet — those responses are prose written for a
+blocked, or degraded by a contained failure, `text` is empty and the flags say
+what happened. An escalating turn may still carry an answer (GE-1), and so may a
+turn degraded only because resolution reported degraded capabilities. Composing
+what a customer reads from `core/prompts/09_fallback_responses.md` is not
+something this runtime can do yet — those responses are prose written for a
 model to follow, and no mechanism selects one. Inventing a sentence here would
 put user-facing wording in a module that owns none, and it would look
 authoritative while resting on nothing. Recorded as RE-5.
@@ -54,7 +56,16 @@ class RuntimeResponse:
       whenever the turn did not produce a deliverable answer.
     * `blocked` — a guardrail stopped this turn (§8.2). The customer must not
       receive `text`; there will not be any.
-    * `escalate` — a human should take over (§8's escalation semantics).
+    * `escalate` — a turn-level runtime fact: `True` if and only if at least one
+      Guardrail Engine checkpoint returned `GuardrailResult.escalate=True`
+      during the current `handle_request` turn; otherwise `False`. Fail-closed
+      verdicts count. What a verdict means as policy stays with §8 and Module 8;
+      the audit's `escalate` value records this same fact. It is not a channel
+      or handoff instruction, not conversation-level handoff state, not proof
+      that a handoff occurred, and does not represent escalation the model
+      performs in conversation. A non-guardrail source of escalation requires
+      amending this definition. Some early-exit paths currently lose a positive
+      verdict before this response is built; that propagation gap is RE-8.
     * `degraded` — the turn completed by a reduced path: an internal failure was
       contained (§14.9), or resolution reported degraded capabilities.
 

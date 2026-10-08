@@ -12,10 +12,11 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Eleven open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
-RE-3, RE-5, AUDIT-6, WR-2**, recorded during Modules 10, 11, 14 and 15,
-the §14 post-implementation audit, the Step 4 roadmap audit of 2026-09-05, and
-the WR-1 implementation audit of the same day.
+**Twelve open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
+RE-3, RE-5, RE-8, AUDIT-6, WR-2**, recorded during Modules 10, 11, 14 and 15,
+the §14 post-implementation audit, the Step 4 roadmap audit of 2026-09-05, the
+WR-1 implementation audit of the same day, and the `RuntimeResponse.escalate`
+semantics ruling of 2026-10-08.
 **WR-1 and GE-1 are not new defects** — both were disclosed in source and in
 README from their own module milestones, and both are pinned by tests; what they
 lacked until 2026-09-05 was a register identifier, an owner and a closure
@@ -98,6 +99,7 @@ one class.
 | **RE-5** | **§14 composes no customer-facing fallback text** | **Architecture Issue** |
 | **RE-6** | **A blocked answer is not recorded as an agent turn** | **Documentation / Reporting** |
 | **RE-7** | **§14 publishes no camelCase alias; the convention is unsettled** | **Documentation / Reporting** |
+| **RE-8** | **A positive escalation verdict can be lost before the final `RuntimeResponse`** | **Architecture Issue** |
 | **AUDIT-1** | **Budget and provider are never proven to describe the same model** | **Closed** — resolved globally |
 | **AUDIT-2** | **Cross-project session/workflow contamination via shared stores** | **AMENDED** — resolved for the production activation path; **open outside it** (constructor escape hatch remains) |
 | **AUDIT-3** | **`transition_history` grows with no-op entries** | **Runtime Improvement** |
@@ -1306,8 +1308,9 @@ replaced, not extended.
 
 **Class: Architecture Issue.**
 
-When a turn is blocked, escalated or degraded, `RuntimeResponse.text` is empty
-and the flags carry the outcome. `RuntimeResponse.__post_init__` refuses a
+When a turn is blocked, or degraded by a contained failure,
+`RuntimeResponse.text` is empty and the flags carry the outcome; an escalating
+turn may still carry an answer (GE-1). `RuntimeResponse.__post_init__` refuses a
 blocked response that carries text at all.
 
 §8.3 assigns composing a safe alternative outside the Guardrail Engine, and
@@ -2756,6 +2759,47 @@ Proven by fifteen tests across `tests/guardrail/` and `tests/runtime_engine/`.
 Two existing tests were **transformed, not deleted**: the 10-condition count
 narrowed to 8, and the "does not guess" test kept every case whose premise still
 holds while the two now-enforced messages moved to positive coverage.
+
+---
+
+## Registered with the `RuntimeResponse.escalate` semantics ruling, 2026-10-08
+
+**Ruling, approved:** `RuntimeResponse.escalate` is `True` if and only if at
+least one Guardrail Engine checkpoint returned `GuardrailResult.escalate=True`
+during the current `handle_request` turn; otherwise it is `False`. It is a
+turn-level runtime fact sourced from Guardrail Engine verdicts, fail-closed
+verdicts included, and the audit's `escalate` value records it. It is not a
+channel instruction or handoff state. A non-guardrail source of escalation
+requires amending the definition. Recorded on the field in
+`runtime/models/runtime.py`.
+
+---
+
+### RE-8 — A positive escalation verdict can be lost before the final `RuntimeResponse`
+
+**Class: Architecture Issue** · Registered 2026-10-08. **Open; not implemented.**
+
+The current runtime does not yet conform to the ruling above on every
+turn-ending path. A Guardrail Engine checkpoint can return `escalate=True` during
+the turn, and the final `RuntimeResponse` (and so the audit outcome) can still
+report `escalate=False`, when the turn ends by:
+
+* a prompt-assembly, provider, post-response guardrail, router, state-commit,
+  delivery or tool-stage exception — `handle_request` replaces the outcome with
+  `RuntimeResponse(degraded=True)`;
+* a post-response block — `PostResponseGuardrailStage` builds the blocked
+  response from the post-response verdict alone.
+
+Until this closes, `escalate=False` on such a turn does not prove that no
+checkpoint escalated.
+
+**Scope is propagation only.** Whether technical failures should themselves
+escalate is AUDIT-6. Customer wording is RE-5. Handoff state and channel
+instructions are not part of this issue.
+
+**To close it:** a separately authorized §14 change — GE-1 authorized only one —
+that carries every positive verdict already returned in the turn into the final
+`RuntimeResponse` on every turn-ending path.
 
 ---
 
