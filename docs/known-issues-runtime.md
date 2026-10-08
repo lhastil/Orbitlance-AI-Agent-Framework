@@ -1712,7 +1712,7 @@ question §14 does not answer.
 
 `core/guardrails/escalation.md` lists *"Technical issues exceed the AI's
 capabilities"* among its Automatic Escalation Conditions — but that condition is
-one of the ten the Guardrail Engine publishes in `UNENFORCED_CORE_CONDITIONS` as
+one of the eight the Guardrail Engine publishes in `UNENFORCED_CORE_CONDITIONS` as
 having no deterministic evaluator. **The Runtime Engine must not invent
 escalation policy for internal failures**: doing so would implement a guardrail
 rule Module 8 declined to implement, against §14.3.

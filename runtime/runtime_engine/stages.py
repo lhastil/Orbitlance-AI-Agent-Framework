@@ -168,12 +168,14 @@ class PreFlightGuardrailStage:
     Provider Registry's `generate` was never invoked"* — holds structurally
     rather than by inspection.
 
-    Worth saying plainly, because a stage that always passes is easy to mistake
-    for coverage: **the Guardrail Engine's pre-flight check applies no content
-    rule today.** Every automatic escalation condition is semantic prose with no
-    deterministic evaluator, and the engine publishes that through
-    `UNENFORCED_CORE_CONDITIONS`. This stage is wired and real, and it will
-    block the moment the engine can — it just cannot block on message text yet.
+    Worth saying plainly, because a stage that usually passes is easy to mistake
+    for coverage: **the Guardrail Engine's pre-flight check evaluates exactly two
+    content conditions** — the Core-published escalation vocabulary for a
+    request for a human representative and for a manager or supervisor (GE-1).
+    A match requests escalation and **does not block**: the turn proceeds, and
+    `DeliveryStage` carries the flag to the response. The remaining Automatic
+    Escalation Conditions are unenforced, and the engine publishes them through
+    `UNENFORCED_CORE_CONDITIONS`.
     """
 
     __slots__ = ("_guardrails", "_context", "name")

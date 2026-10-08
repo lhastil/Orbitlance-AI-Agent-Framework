@@ -51,7 +51,7 @@ Alongside module 9, one concrete provider adapter is implemented: **Google Gemin
 
 ### Verification
 
-- **1056 passed, 16 skipped** in the offline suite — no credential or network required. The 16 skipped are the live Gemini tests below, which the offline suite excludes.
+- **1091 passed, 16 skipped** in the offline suite, with the `gemini` extra installed — no credential or network required. The 16 skipped are the live Gemini tests below, which the offline suite excludes. Without the extra, the 102 offline Gemini adapter tests are skipped as well.
 - **16 / 16 live Gemini tests passing** against the real API. These are opt-in and are excluded from the offline suite.
 
 ## Repository structure
@@ -120,8 +120,8 @@ Orbitlance-AI-Agent-Framework/
 ## Getting started
 
 ```bash
-pip install -e ".[dev]"     # framework + test tooling
-pytest -q                   # the offline suite
+pip install -e ".[dev,gemini]"  # framework + test tooling + the Gemini extra the full offline suite needs
+pytest -q                      # the offline suite; live Gemini tests stay skipped unless explicitly enabled
 ```
 
 The production activation path requires **`ORBITLANCE_AUDIT_DB`** — the path its durable audit records are written to. `activate()` raises `AuditStoreNotConfiguredError` when it is unset, so a runtime that cannot keep an audit trail does not start. The offline suite supplies its own temporary database and needs no setup.
