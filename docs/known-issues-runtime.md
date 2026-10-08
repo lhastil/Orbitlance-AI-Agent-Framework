@@ -2777,18 +2777,32 @@ requires amending the definition. Recorded on the field in
 
 ### RE-8 — A positive escalation verdict can be lost before the final `RuntimeResponse`
 
-**Class: Architecture Issue** · Registered 2026-10-08. **Open; not implemented.**
+**Class: Architecture Issue** · Registered 2026-10-08. **Open; design ruled
+(below), not implemented.**
 
 The current runtime does not yet conform to the ruling above on every
 turn-ending path. A Guardrail Engine checkpoint can return `escalate=True` during
 the turn, and the final `RuntimeResponse` (and so the audit outcome) can still
-report `escalate=False`, when the turn ends by:
+report `escalate=False`.
 
-* a prompt-assembly, provider, post-response guardrail, router, state-commit,
-  delivery or tool-stage exception — `handle_request` replaces the outcome with
-  `RuntimeResponse(degraded=True)`;
+**Reachable today:**
+
+* a prompt-assembly, provider, router, state-commit or delivery exception —
+  `handle_request` replaces the outcome with `RuntimeResponse(degraded=True)`;
 * a post-response block — `PostResponseGuardrailStage` builds the blocked
   response from the post-response verdict alone.
+
+**Not reachable today, but covered by the same invariant:**
+
+* a post-response stage exception — the Guardrail Engine contains its own
+  failures and returns a blocking, escalating verdict instead of raising;
+* a tool-stage exception — nothing produces a `ToolRequest` (TE-1);
+* a turn that ends with no outcome — `build_pipeline` always ends with
+  `DeliveryStage`, which sets one or raises; reachable only by substituting the
+  pipeline in a test.
+
+The frozen definition applies to every `handle_request` turn, so these paths are
+covered without being made reachable.
 
 Until this closes, `escalate=False` on such a turn does not prove that no
 checkpoint escalated.
@@ -2797,9 +2811,54 @@ checkpoint escalated.
 escalate is AUDIT-6. Customer wording is RE-5. Handoff state and channel
 instructions are not part of this issue.
 
-**To close it:** a separately authorized §14 change — GE-1 authorized only one —
-that carries every positive verdict already returned in the turn into the final
-`RuntimeResponse` on every turn-ending path.
+#### Ruling, 2026-10-08 — RE-8's design and its §14 authorization
+
+**Accepted architectural ruling. Ratified, not yet implemented. RE-8 stays open
+until implementation and verification are complete.**
+
+> **Owner: `RuntimeEngine.handle_request`.** After the final `RuntimeResponse`
+> outcome is settled — including exception containment and the no-outcome
+> fallback — and immediately before `_observe_outcome` and `return`: if any
+> Guardrail Engine verdict recorded on the current turn's `TurnState` has
+> `escalate=True`, the final `RuntimeResponse.escalate` must be `True`.
+
+| | |
+|---|---|
+| **Behaviour** | Only `escalate=False → True`. Never `True → False`. No other `RuntimeResponse` field changes |
+| **Source** | The Guardrail Engine verdicts already recorded on the turn's `TurnState` (`pre_flight`, `post_response`), read directly. No new `TurnState` field; no helper unless implementation proves one strictly necessary |
+| **Nature** | A final outcome-normalization guarantee — not a pipeline stage, and not Guardrail Engine logic |
+| **§14 authorization** | **Exactly one additional §14 behavioural change**, for RE-8 only. GE-1's "one companion §14 change" limit is superseded for this authorization alone; no general reopening of §14 |
+| **Specification** | `docs/runtime-specification.md` is **not** changed. Like GE-1's change, this is authorized by register ruling |
+| **`DeliveryStage`** | Its existing escalation merge is **kept unchanged**. The engine step is the final guarantee across every termination path; the duplicate calculation on the Delivery path is not a problem RE-8 solves |
+| **No-outcome path** | Covered for escalation preservation only. Its test asserts the escalation invariant and creates no contract for `text`, `blocked` or `degraded` |
+
+**RE-8 does not create escalation.** It propagates a verdict that already
+exists. Whether a failure should create a new verdict is AUDIT-6, which this
+ruling does not touch.
+
+**Tests required with the implementation:**
+
+1. a positive pre-flight verdict survives every applicable termination path;
+2. a positive post-response verdict survives the relevant paths;
+3. no escalating verdict means `RuntimeResponse.escalate=False` on the same paths;
+4. the audit's `escalate` equals the final `RuntimeResponse.escalate`;
+5. `blocked`, `degraded` and text semantics are unchanged on real, reachable paths;
+6. no stage gains its own ownership of escalation propagation;
+7. the synthetic no-outcome path preserves `escalate=True` and asserts nothing more.
+
+Existing GE-1 and `DeliveryStage` tests stay unchanged. No per-stage
+propagation is added.
+
+**Out of scope:** new escalation verdicts; technical-failure escalation policy
+(AUDIT-6); Guardrail Engine policy and §8; the §8.12(a) / GE-1 tension; RE-5;
+who decides when a tool is called (TE-1), who owns customer-data collection,
+and who enforces project workflow scope; WR-2; handoff or channel semantics; escalation
+source or reason fields; `RuntimeResponse` fields; pipeline order;
+`DeliveryStage`; exception-containment semantics; audit payload keys.
+
+**Untouched frozen decisions:** the `RuntimeResponse.escalate` definition, GE-1
+policy, WR-1, `RuntimeResponse`'s four-field model, §14 pipeline order, §15's
+pure-recorder principle, Guardrail Engine semantics, and every earlier freeze.
 
 ---
 
