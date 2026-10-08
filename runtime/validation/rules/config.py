@@ -4,6 +4,8 @@ Implements the config-facing checks the spec assigns to this layer:
   * required sections present
   * declared industry playbook(s) actually exist in Core
   * enabled workflows are among the canonical six
+  * the first-turn workflow is enabled, and enabled workflows' published
+    routing targets are reported when not enabled (WR-3)
   * an LLM provider is declared
   * that provider is registered in the Provider Registry
   * Operating Constraints are additive only and never relax a Core guardrail
@@ -25,6 +27,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from runtime.models.project_context import ProjectDocument
 from runtime.models.severity import Severity
 from runtime.models.validation import ValidationIssue
 from runtime.validation import codes
@@ -50,6 +53,66 @@ def _declared_provider(context: ProjectRuleContext) -> str | None:
     """The declared primary provider, or None if absent or a placeholder."""
     primary = context.project.config_data.llm_provider.primary
     return None if _is_placeholder(primary) else primary
+
+
+def _workflow_stem(name: str) -> str:
+    """A workflow label or Core file name in the Resolver's comparison form.
+
+    Mirrors the Resolver's `_stem` exactly (`discovery.md` -> `discovery`,
+    `CRM Sync` -> `crm_sync`). The Validation Layer may not import the Resolver
+    (§13.7), so the rule is restated here; tests/test_vocabulary_alignment.py
+    keeps the two equal.
+    """
+    text = name.strip().casefold()
+    if text.endswith(".md"):
+        text = text[:-3]
+    return text.replace("-", "_").replace(" ", "_")
+
+
+def _enabled_workflows(context: ProjectRuleContext) -> frozenset[str]:
+    """The workflows the Resolver will enable for this project (WR-3).
+
+    Exactly the Resolver's semantics, not `ConfigWorkflowsRule`'s: nothing
+    declared enables every Core workflow; anything declared enables only the
+    labels that name a Core workflow, so a placeholder-only or unknown-only list
+    enables none. Core `Dependencies` enable nothing.
+    """
+    core = context.core
+    assert core is not None  # guaranteed by required_collaborators
+    available = frozenset(_workflow_stem(name) for name in core.workflows)
+    declared = context.project.config_data.enabled_workflows
+    if not declared:
+        return available
+    return frozenset(
+        stem for stem in (_workflow_stem(label) for label in declared) if stem in available
+    )
+
+
+def _published_routing_targets(document: ProjectDocument | None) -> tuple[str, ...]:
+    """The workflows a Core workflow document publishes routing phrases for.
+
+    Addressed exactly as the Workflow Router reads them: each third-level
+    heading after a "Routing Phrases" section names a target, and counts only
+    if a `- ` phrase sits under it. The heading text is the target, so no
+    workflow name is written here.
+    """
+    if document is None:
+        return ()
+    section_key = spec.ROUTING_PHRASES_SECTION.casefold()
+    targets: list[str] = []
+    in_routing_section = False
+    for section in document.sections:
+        if section.heading_level <= 2:
+            in_routing_section = section.normalised_heading == section_key
+            continue
+        if not in_routing_section or section.heading_level != 3:
+            continue
+        if any(
+            (stripped := line.strip()).startswith("- ") and len(stripped) > 2
+            for line in section.body.splitlines()
+        ):
+            targets.append(section.heading_text.strip())
+    return tuple(dict.fromkeys(targets))
 
 
 class ConfigSectionsRule(ProjectRule):
@@ -179,6 +242,80 @@ class ConfigWorkflowsRule(ProjectRule):
         return underscored if underscored in spec.CANONICAL_WORKFLOWS else None
 
 
+class ConfigFirstTurnWorkflowRule(ProjectRule):
+    """WR-3: a project must enable the workflow every conversation starts in."""
+
+    rule_id = "config.first_turn_workflow_enabled"
+    description = "The first-turn workflow is enabled."
+    required_collaborators = frozenset({Collaborator.CORE_BUNDLE})
+
+    def is_applicable(self, context: ProjectRuleContext) -> bool:
+        return context.project.config.exists
+
+    def evaluate(self, context: ProjectRuleContext) -> Iterable[ValidationIssue]:
+        first = spec.FIRST_TURN_WORKFLOW
+        if first in _enabled_workflows(context):
+            return
+        yield self.issue(
+            code=codes.CONF_FIRST_TURN_WORKFLOW_NOT_ENABLED,
+            severity=Severity.ERROR,
+            message=(
+                f"config.md does not enable {first!r}, the workflow every "
+                "conversation starts in. The Runtime Engine would refuse to commit "
+                "it, so no conversation could enter a workflow."
+            ),
+            file=context.project.config.relative_path,
+            section="Enabled Workflows",
+            field_name=first,
+            recommendation=(
+                f"Enable {first!r} under '## Enabled Workflows'. Every other "
+                "workflow remains optional."
+            ),
+        )
+
+
+class ConfigRoutingTargetsRule(ProjectRule):
+    """WR-3: announce, at activation, the transitions the runtime will refuse.
+
+    A WARNING, not an ERROR: the project still activates, and the Runtime Engine
+    refuses each such transition, keeping the conversation where it is.
+    """
+
+    rule_id = "config.routing_targets_enabled"
+    description = "Every routing target an enabled workflow publishes is enabled."
+    required_collaborators = frozenset({Collaborator.CORE_BUNDLE})
+
+    def is_applicable(self, context: ProjectRuleContext) -> bool:
+        return context.project.config.exists
+
+    def evaluate(self, context: ProjectRuleContext) -> Iterable[ValidationIssue]:
+        core = context.core
+        assert core is not None  # guaranteed by required_collaborators
+        enabled = _enabled_workflows(context)
+        for workflow in sorted(enabled):
+            document = core.workflows.get(f"{workflow}.md")
+            for target in _published_routing_targets(document):
+                if target in enabled:
+                    continue
+                yield self.issue(
+                    code=codes.CONF_ROUTING_TARGET_NOT_ENABLED,
+                    severity=Severity.WARNING,
+                    message=(
+                        f"Enabled workflow {workflow!r} publishes routing phrases "
+                        f"for {target!r}, which this project does not enable. The "
+                        "Runtime Engine will refuse that transition and keep the "
+                        f"conversation in {workflow!r}."
+                    ),
+                    file=context.project.config.relative_path,
+                    section="Enabled Workflows",
+                    field_name=target,
+                    recommendation=(
+                        f"Enable {target!r} if conversations should be able to move "
+                        f"there from {workflow!r}; otherwise no action is needed."
+                    ),
+                )
+
+
 class ConfigProviderDeclaredRule(ProjectRule):
     """Answerable from the loaded config alone -- needs no collaborator."""
 
@@ -296,6 +433,8 @@ CONFIG_RULES: tuple[ProjectRule, ...] = (
     ConfigSectionsRule(),
     ConfigPlaybookRule(),
     ConfigWorkflowsRule(),
+    ConfigFirstTurnWorkflowRule(),
+    ConfigRoutingTargetsRule(),
     ConfigProviderDeclaredRule(),
     ConfigProviderRegisteredRule(),
     ConfigOperatingConstraintsRule(),

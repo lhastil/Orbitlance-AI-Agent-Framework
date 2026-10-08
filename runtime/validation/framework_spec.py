@@ -57,6 +57,21 @@ CANONICAL_WORKFLOWS: Final[tuple[str, ...]] = (
     "voice_agent",
 )
 
+# The workflow every new conversation starts in, which WR-3 makes the one
+# workflow a project must enable.
+# Source: core/workflows/discovery.md's Trigger ("A new conversation begins"),
+# as the Workflow Router's `FIRST_TURN_WORKFLOW` applies it (WR-1, R-1).
+# Transcribed because the Validation Layer may not depend on the Router (§13.7);
+# tests/test_vocabulary_alignment.py keeps the two equal.
+FIRST_TURN_WORKFLOW: Final[str] = "discovery"
+
+# The section under which a Core workflow publishes its routing vocabulary, one
+# third-level heading per target workflow.
+# Source: "## Routing Phrases" in core/workflows/ (WR-1), as the Workflow
+# Router's `_ROUTING_SECTION` addresses it. Transcribed for the same reason, and
+# kept equal by the same alignment tests.
+ROUTING_PHRASES_SECTION: Final[str] = "Routing Phrases"
+
 # Accepted human spellings, mapped to canonical ids.
 #
 # Source of truth: core/templates/config.md — "The six available workflows are:

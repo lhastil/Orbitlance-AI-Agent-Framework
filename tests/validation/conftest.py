@@ -9,35 +9,37 @@ module's real interface and keeps these tests fast and hermetic.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable, Mapping
 
 from runtime.loader.config_parser import parse_config
+from runtime.loader.markdown import split_sections
 from runtime.models.core_bundle import CoreBundle
 from runtime.models.project_context import (
     ExtensionPoint,
     ProjectContext,
     ProjectDocument,
+    Section,
 )
 from runtime.validation import framework_spec as spec
 
-_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*\S)\s*$", re.MULTILINE)
 
+def parse_sections(markdown: str) -> tuple[Section, ...]:
+    """Decompose markdown into `Section`s exactly as the Loaders do.
 
-def parse_sections(markdown: str) -> dict[str, str]:
-    """Split markdown into {normalised heading: body}.
-
-    Mirrors what the future Project Loader must produce, so tests exercise
-    realistic ProjectDocument shapes rather than hand-written section maps.
+    Built from the Loaders' own `split_sections`, so test documents carry the
+    real `ProjectDocument.sections` shape. (This previously returned a
+    `{heading: body}` dict, which `ProjectDocument` reduced to bare heading
+    strings; no rule read sections until WR-3's routing-target rule.)
     """
-    sections: dict[str, str] = {}
-    matches = list(_HEADING_RE.finditer(markdown))
-    for index, match in enumerate(matches):
-        title = match.group(2).strip().casefold()
-        start = match.end()
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(markdown)
-        sections[title] = markdown[start:end].strip()
-    return sections
+    return tuple(
+        Section(
+            ordinal=index,
+            heading_text=section.heading,
+            heading_level=section.level,
+            body=section.body,
+        )
+        for index, section in enumerate(split_sections(markdown).sections)
+    )
 
 
 def document(

@@ -292,20 +292,28 @@ class WorkflowStage:
     §14.2 names "workflow routing/state commit" as one step and it stays one:
     the Router proposes and never writes, the Manager writes and never decides.
 
-    The Router returns "stay in the active workflow" for every turn after the
-    first — every transition its documents describe turns on a semantic
-    judgement it refuses to fabricate. The seam is real; the routing is not yet
-    intelligent, and this stage does not compensate for that.
+    **WR-3: the Runtime Engine owns the project's workflow scope.** Between the
+    two calls, a decision whose target the project has not enabled is refused:
+    nothing is committed, the current workflow and its history stay as they
+    were, and the turn continues to deliver its answer — not degraded, and with
+    no escalation. The Router stays unaware of scope, the Manager still judges
+    nothing, and the Prompt Assembler's `WorkflowNotEnabledError` remains the
+    downstream backstop.
     """
 
-    __slots__ = ("_router", "_states", "_core", "name")
+    __slots__ = ("_router", "_states", "_core", "_enabled_workflows", "name")
 
     def __init__(
-        self, router: WorkflowRouter, states: WorkflowStateManager, core: CoreBundle
+        self,
+        router: WorkflowRouter,
+        states: WorkflowStateManager,
+        core: CoreBundle,
+        context: ResolvedContext,
     ) -> None:
         self._router = router
         self._states = states
         self._core = core
+        self._enabled_workflows = context.config.enabled_workflows
         self.name = "workflow"
 
     def run(self, state: TurnState) -> None:
@@ -313,6 +321,8 @@ class WorkflowStage:
         decision = self._router.route(
             state.workflow_state, state.request.message, self._core
         )
+        if decision.target_workflow not in self._enabled_workflows:
+            return  # WR-3: refused; the state loaded for this turn stands.
         state.workflow_state = self._states.commit_transition(
             state.request.conversation_id, decision
         )
@@ -424,7 +434,7 @@ def build_pipeline(
         PromptAssemblyStage(core, context, token_budget),
         ProviderStage(providers, context),
         PostResponseGuardrailStage(guardrails, context),
-        WorkflowStage(router, states, core),
+        WorkflowStage(router, states, core, context),
         ToolStage(tools, context),
         DeliveryStage(sessions),
     )

@@ -498,3 +498,155 @@ def test_unrecognised_heading_does_not_absorb_a_requirement(
         i.code == codes.CONF_SECTION_MISSING and i.section == "LLM Provider"
         for i in result.issues
     )
+
+
+# =============================================================================
+# WR-3 — activation-time workflow-scope checks (CONF008, CONF009)
+# =============================================================================
+def _config_enabling(*items: str, section: bool = True):
+    """VALID_CONFIG with its Enabled Workflows list replaced by `items`."""
+    head, rest = VALID_CONFIG.split("## Enabled Workflows", 1)
+    tail = rest[rest.index("\n## ") :]
+    if not section:
+        return document("config.md", f"{head.rstrip()}\n{tail}")
+    listed = "".join(f"- {item}\n" for item in items)
+    return document("config.md", f"{head}## Enabled Workflows\n\n{listed}{tail}")
+
+
+def _core_with_routes(routes: dict[str, tuple[str, ...]], extra: dict[str, str] | None = None):
+    """make_core(), with chosen workflows publishing Routing Phrases."""
+    import dataclasses
+
+    core = make_core()
+    workflows = dict(core.workflows)
+    for workflow, targets in routes.items():
+        body = "".join(f"### {target}\n\n- a phrase for {target}\n\n" for target in targets)
+        workflows[f"{workflow}.md"] = document(
+            f"{workflow}.md",
+            f"# {workflow}\n\n## Routing Phrases\n\n{body}",
+            relative_path=f"core/workflows/{workflow}.md",
+        )
+    for workflow, text in (extra or {}).items():
+        workflows[f"{workflow}.md"] = document(
+            f"{workflow}.md", text, relative_path=f"core/workflows/{workflow}.md"
+        )
+    return dataclasses.replace(core, workflows=workflows)
+
+
+def test_wr3_a_project_without_discovery_is_rejected(validator: Validator) -> None:
+    config = _config_enabling("**Recommendation**", "**Consultation**")
+    result = validator.validate_project(make_project(config=config), make_core())
+
+    assert not result.valid
+    issue = next(
+        i for i in result.issues if i.code == codes.CONF_FIRST_TURN_WORKFLOW_NOT_ENABLED
+    )
+    assert issue.severity is Severity.ERROR
+    assert issue.field_name == "discovery"
+
+
+def test_wr3_a_project_with_discovery_passes(validator: Validator) -> None:
+    config = _config_enabling("**Discovery**", "**Consultation**")
+    result = validator.validate_project(make_project(config=config), make_core())
+
+    assert result.valid, result.render()
+    assert codes.CONF_FIRST_TURN_WORKFLOW_NOT_ENABLED not in result.codes()
+
+
+def test_wr3_an_undeclared_list_enables_every_workflow(validator: Validator) -> None:
+    """No Enabled Workflows section: the Resolver enables all six."""
+    config = _config_enabling(section=False)
+    result = validator.validate_project(make_project(config=config), make_core())
+
+    assert codes.CONF_SECTION_MISSING in result.codes()
+    assert codes.CONF_FIRST_TURN_WORKFLOW_NOT_ENABLED not in result.codes()
+
+
+def test_wr3_an_empty_list_enables_every_workflow(validator: Validator) -> None:
+    config = _config_enabling()
+    result = validator.validate_project(
+        make_project(config=config), _core_with_routes({"discovery": ("recommendation",)})
+    )
+
+    assert codes.CONF_FIRST_TURN_WORKFLOW_NOT_ENABLED not in result.codes()
+    assert codes.CONF_ROUTING_TARGET_NOT_ENABLED not in result.codes()
+
+
+def test_wr3_a_placeholder_only_list_enables_nothing(validator: Validator) -> None:
+    """The Resolver enables no workflow here, so Discovery is not enabled."""
+    config = _config_enabling("_(placeholder)_")
+    result = validator.validate_project(make_project(config=config), make_core())
+
+    assert not result.valid
+    assert codes.CONF_FIRST_TURN_WORKFLOW_NOT_ENABLED in result.codes()
+
+
+def test_wr3_an_unknown_name_is_reported_alongside_missing_discovery(
+    validator: Validator,
+) -> None:
+    config = _config_enabling("**Lead Qualification**", "**Consultation**")
+    result = validator.validate_project(make_project(config=config), make_core())
+
+    assert codes.CONF_WORKFLOW_UNKNOWN in result.codes()
+    assert codes.CONF_FIRST_TURN_WORKFLOW_NOT_ENABLED in result.codes()
+
+
+def test_wr3_a_published_target_not_enabled_is_a_warning(validator: Validator) -> None:
+    config = _config_enabling("**Discovery**", "**Consultation**")
+    core = _core_with_routes({"discovery": ("recommendation",)})
+    result = validator.validate_project(make_project(config=config), core)
+
+    assert result.valid, result.render()
+    warnings = [i for i in result.issues if i.code == codes.CONF_ROUTING_TARGET_NOT_ENABLED]
+    assert [(i.severity, i.field_name) for i in warnings] == [
+        (Severity.WARNING, "recommendation")
+    ]
+    assert "'discovery'" in warnings[0].message
+
+
+def test_wr3_no_warning_when_every_target_is_enabled(validator: Validator) -> None:
+    core = _core_with_routes(
+        {"discovery": ("recommendation",), "recommendation": ("consultation",)}
+    )
+    result = validator.validate_project(make_project(), core)
+
+    assert codes.CONF_ROUTING_TARGET_NOT_ENABLED not in result.codes()
+
+
+def test_wr3_the_warning_follows_core_not_a_list_in_python(validator: Validator) -> None:
+    """Substitute Core's published target: the warning moves with it."""
+    config = _config_enabling("**Discovery**", "**Recommendation**")
+
+    as_published = validator.validate_project(
+        make_project(config=config), _core_with_routes({"discovery": ("recommendation",)})
+    )
+    substituted = validator.validate_project(
+        make_project(config=config), _core_with_routes({"discovery": ("consultation",)})
+    )
+
+    assert codes.CONF_ROUTING_TARGET_NOT_ENABLED not in as_published.codes()
+    assert [
+        i.field_name
+        for i in substituted.issues
+        if i.code == codes.CONF_ROUTING_TARGET_NOT_ENABLED
+    ] == ["consultation"]
+
+
+def test_wr3_core_dependencies_enable_nothing(validator: Validator) -> None:
+    """Consultation declares Recommendation as a Dependency; that is data flow,
+    not enablement, so a project may enable Consultation without it."""
+    config = _config_enabling("**Discovery**", "**Consultation**")
+    core = _core_with_routes(
+        {},
+        extra={
+            "consultation": (
+                "# Consultation\n\n## Dependencies\n\n"
+                "- Discovery Workflow\n- Recommendation Workflow\n"
+            )
+        },
+    )
+    result = validator.validate_project(make_project(config=config), core)
+
+    assert result.valid, result.render()
+    assert codes.CONF_FIRST_TURN_WORKFLOW_NOT_ENABLED not in result.codes()
+    assert codes.CONF_ROUTING_TARGET_NOT_ENABLED not in result.codes()

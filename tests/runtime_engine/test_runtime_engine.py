@@ -325,11 +325,21 @@ def test_20_the_fake_adapter_passes_the_real_conformance_suite() -> None:
 def test_1_the_fixture_project_passes_activation(
     core: CoreBundle, fixture_context: ResolvedContext
 ) -> None:
-    """§14.10: a passed ValidationResult is a hard precondition."""
+    """§14.10: a passed ValidationResult is a hard precondition.
+
+    The one issue is WR-3's activation WARNING: `discovery` publishes a route to
+    `recommendation`, which this fixture deliberately does not enable.
+    """
+    from runtime.models.severity import Severity
+    from runtime.validation import codes
+
     registry = ProviderRegistry().register(FixtureAdapter())
     result = validation_for(core, registry)
     assert result.valid
-    assert result.issues == ()
+    assert [(i.code, i.severity, i.field_name) for i in result.issues] == [
+        (codes.CONF_ROUTING_TARGET_NOT_ENABLED, Severity.WARNING, "recommendation")
+    ]
+    assert "'discovery'" in result.issues[0].message
     engine, _, _ = build_engine(core, fixture_context)
     assert engine.project_id == FIXTURE_ID
 
@@ -2051,3 +2061,131 @@ def test_re8_only_the_engine_owns_escalation_propagation() -> None:
     )
     attributes = {n.attr for n in ast.walk(handler) if isinstance(n, ast.Attribute)}
     assert {"pre_flight", "post_response", "escalate"} <= attributes
+
+
+# =============================================================================
+# WR-3 — the Runtime Engine enforces the project's workflow scope
+# =============================================================================
+def _with_enabled(context: ResolvedContext, *workflows: str) -> ResolvedContext:
+    """The fixture context with a chosen enabled set (bypasses validation)."""
+    import dataclasses
+
+    return dataclasses.replace(
+        context, config=dataclasses.replace(context.config, enabled_workflows=workflows)
+    )
+
+
+def test_wr3_an_enabled_transition_is_committed(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    context = _with_enabled(fixture_context, "consultation", "discovery", "recommendation")
+    engine, _, _ = build_engine(core, context)
+    for message in ("hello", core_routing_phrase("discovery", "recommendation")):
+        engine.handle_request(request(message, conversation_id="wr3-a"))
+
+    state = workflow_states(engine).get_state("wr3-a")
+    assert state.active_workflow == "recommendation"
+    assert state.transition_history == ("None->discovery", "discovery->recommendation")
+
+
+def test_wr3_an_out_of_scope_transition_is_refused(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """Nothing committed, no history entry, the answer delivered, and the
+    response and audit event identical to any ordinary completed turn."""
+    sink = RecordingSink()
+    engine, _, _ = build_engine(core, fixture_context, observability=sink)
+    engine.handle_request(request("hello", conversation_id="wr3-r"))
+    before = workflow_states(engine).get_state("wr3-r")
+
+    response = engine.handle_request(
+        request(core_routing_phrase("discovery", "recommendation"), conversation_id="wr3-r")
+    )
+
+    assert workflow_states(engine).get_state("wr3-r") == before
+    assert response == RuntimeResponse(text=ANSWER)
+    event = sink.logged[-1]
+    assert event.type == "runtime.turn_completed"
+    assert dict(event.payload) == {
+        "blocked": "False",
+        "escalate": "False",
+        "degraded": "False",
+        "channel": "web",
+    }
+
+
+def test_wr3_the_stuck_conversation_no_longer_happens(
+    core: CoreBundle, audit_database: pathlib.Path
+) -> None:
+    """Before WR-3, this routing phrase committed Recommendation, which the
+    fixture does not enable, and every later turn degraded."""
+    del audit_database
+    engine = activate(core, FIXTURES, FIXTURE_ID, ProviderRegistry().register(FixtureAdapter()))
+    phrase = core_routing_phrase("discovery", "recommendation")
+    for message in ("hello", phrase, "ok", "thanks"):
+        response = engine.handle_request(request(message, conversation_id="wr3-s"))
+        assert response == RuntimeResponse(text=ANSWER)
+    assert workflow_states(engine).get_state("wr3-s").active_workflow == "discovery"
+
+
+def test_wr3_without_discovery_the_first_commit_is_refused_and_the_turn_completes(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """Direct construction bypasses the CONF008 activation check; the commit
+    gate still holds, and the turn is not degraded."""
+    engine, _, _ = build_engine(core, _with_enabled(fixture_context, "consultation"))
+    for message in ("hello", "What are your opening hours?"):
+        response = engine.handle_request(request(message, conversation_id="wr3-d"))
+        assert response == RuntimeResponse(text=ANSWER)
+
+    state = workflow_states(engine).get_state("wr3-d")
+    assert state.active_workflow is None
+    assert state.transition_history == ()
+
+
+@pytest.mark.parametrize(("target", "committed"), [("voice_agent", False), ("consultation", True)])
+def test_wr3_any_producers_target_passes_the_same_gate(
+    core: CoreBundle, fixture_context: ResolvedContext, target: str, committed: bool
+) -> None:
+    """A substituted producer stands in for any future non-Router source of
+    transitions: an out-of-scope target is refused, an enabled one committed."""
+
+    class Producer:
+        def route(self, current_state, latest_message, core_bundle):
+            del current_state, latest_message, core_bundle
+            return WorkflowTransitionDecision(target_workflow=target)
+
+    engine, _, _ = build_engine(core, fixture_context)
+    _stage(engine, "workflow")._router = Producer()  # noqa: SLF001
+    response = engine.handle_request(request(conversation_id="wr3-p"))
+
+    assert response == RuntimeResponse(text=ANSWER)
+    active = workflow_states(engine).get_state("wr3-p").active_workflow
+    assert (active == target) is committed
+
+
+def test_wr3_the_workflow_stage_adds_no_module_call() -> None:
+    """Structural: `run` still calls exactly `route` and `commit_transition`,
+    and reads no escalation."""
+    tree = ast.parse((PACKAGE / "stages.py").read_text(encoding="utf-8"))
+    stage = next(
+        n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "WorkflowStage"
+    )
+    run = next(n for n in stage.body if isinstance(n, ast.FunctionDef) and n.name == "run")
+    calls = sorted(
+        n.func.attr
+        for n in ast.walk(run)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+    )
+    assert calls == ["commit_transition", "route"]
+    assert "escalate" not in {n.attr for n in ast.walk(run) if isinstance(n, ast.Attribute)}
+
+
+def test_wr3_the_state_manager_stays_unaware_of_project_scope() -> None:
+    """Structural: Module 7 still judges nothing about scope."""
+    path = REPO_ROOT / "runtime" / "workflow_state" / "manager.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    attributes = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+    assert "ResolvedContext" not in names
+    assert "enabled_workflows" not in attributes

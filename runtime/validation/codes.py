@@ -41,6 +41,8 @@ CONF_PROVIDER_NOT_DECLARED: Final[str] = "CONF004"
 CONF_PROVIDER_NOT_REGISTERED: Final[str] = "CONF005"
 CONF_CONSTRAINT_RELAXES_CORE: Final[str] = "CONF006"
 CONF_NO_WORKFLOWS_ENABLED: Final[str] = "CONF007"
+CONF_FIRST_TURN_WORKFLOW_NOT_ENABLED: Final[str] = "CONF008"
+CONF_ROUTING_TARGET_NOT_ENABLED: Final[str] = "CONF009"
 
 # --- Branding --------------------------------------------------------------
 BRAND_ABSENT: Final[str] = "BRAND001"
