@@ -36,6 +36,7 @@ from runtime.models.core_bundle import CoreBundle
 from runtime.models.prompt_bundle import PromptBundle
 from runtime.models.provider import (
     ProviderCapabilities,
+    ProviderErrorType,
     ProviderMetadata,
     ProviderResponse,
 )
@@ -108,6 +109,7 @@ class FixtureAdapter:
         reserve: int = 64,
         text: str = ANSWER,
         fail_with: Exception | None = None,
+        error_type: ProviderErrorType | None = None,
     ) -> None:
         self._binding = ModelBinding(
             identity=identity,
@@ -116,6 +118,9 @@ class FixtureAdapter:
         )
         self._text = text
         self._fail_with = fail_with
+        #: RE-9: a failure *returned* as a value, which the conformance suite
+        #: accepts, rather than raised.
+        self._error_type = error_type
         self._last: SerializedPrompt | None = None
         self.calls: list[PromptBundle] = []
 
@@ -146,6 +151,7 @@ class FixtureAdapter:
         return ProviderResponse(
             text=self._text,
             metadata=ProviderMetadata(model=self._binding.identity.model_id),
+            error_type=self._error_type,
         )
 
 
@@ -2189,3 +2195,153 @@ def test_wr3_the_state_manager_stays_unaware_of_project_scope() -> None:
     attributes = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
     assert "ResolvedContext" not in names
     assert "enabled_workflows" not in attributes
+
+
+# =============================================================================
+# RE-9 — a turn completes normally only when the provider yields a usable answer
+# =============================================================================
+#: A failure class the provider *returns* as a value rather than raising.
+RE9_RETURNED_FAILURE = ProviderErrorType.SERVICE_UNAVAILABLE
+
+
+class _WatchingPostResponse(GuardrailEngine):
+    """The real Guardrail Engine, recording what reaches post-response."""
+
+    def __init__(self, core: CoreBundle) -> None:
+        super().__init__(core)
+        self.seen: list[ProviderResponse] = []
+        self.verdicts: list = []
+
+    def check_post_response(self, response, resolved_context):
+        self.seen.append(response)
+        verdict = super().check_post_response(response, resolved_context)
+        self.verdicts.append(verdict)
+        return verdict
+
+
+def _run_re9(core, context, adapter: FixtureAdapter, conversation_id: str):
+    """One turn through the real pipeline; returns what RE-9 is judged on."""
+    sessions = SessionManager()
+    guardrails = _WatchingPostResponse(core)
+    sink = RecordingSink()
+    registry = ProviderRegistry().register(adapter)
+    engine = RuntimeEngine(
+        resolved_context=context,
+        validation=validation_for(core, registry),
+        core=core,
+        sessions=sessions,
+        guardrails=guardrails,
+        providers=registry,
+        router=WorkflowRouter(),
+        states=WorkflowStateManager(),
+        tools=ToolExecutor(),
+        audit=sink,
+    )
+    response = engine.handle_request(request(conversation_id=conversation_id))
+    assert len(sink.logged) == 1
+    turns = sessions.get_context(conversation_id).turns
+    return response, sink.logged[0], turns, guardrails
+
+
+def test_re9_a_returned_failure_with_empty_text_is_degraded(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """Clauses 1, 3, 5, 6: degraded, no text, existing event, no agent turn."""
+    response, event, turns, _ = _run_re9(
+        core,
+        fixture_context,
+        FixtureAdapter(text="", error_type=RE9_RETURNED_FAILURE),
+        "re9-empty-failure",
+    )
+    assert response.degraded
+    assert response.text == ""
+    assert not response.blocked
+    assert not response.escalate
+    assert event.type == "runtime.turn_degraded"
+    assert "failed_stage" not in event.payload
+    assert [t.role for t in turns] == [TurnRole.USER]
+
+
+def test_re9_a_returned_failure_never_delivers_its_text(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """Clause 1: `error_type` makes it a failure regardless of its text, and
+    clause 3: that text is not delivered — not to the customer, not to the
+    conversation record the next prompt is built from."""
+    failed_text = "A routine examination is $80."
+    response, event, turns, _ = _run_re9(
+        core,
+        fixture_context,
+        FixtureAdapter(text=failed_text, error_type=RE9_RETURNED_FAILURE),
+        "re9-text-failure",
+    )
+    assert response.degraded
+    assert response.text == ""
+    assert not response.blocked
+    assert not response.escalate
+    assert failed_text not in repr(response)
+    assert event.type == "runtime.turn_degraded"
+    assert "failed_stage" not in event.payload
+    assert [t.role for t in turns] == [TurnRole.USER]
+    assert all(failed_text not in t.content for t in turns)
+
+
+def test_re9_an_empty_successful_response_is_degraded(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """Clause 2: `error_type` unset and `text == ""` is no usable answer."""
+    response, event, turns, _ = _run_re9(
+        core, fixture_context, FixtureAdapter(text=""), "re9-empty-success"
+    )
+    assert response.degraded
+    assert response.text == ""
+    assert not response.blocked
+    assert not response.escalate
+    assert event.type == "runtime.turn_degraded"
+    assert "failed_stage" not in event.payload
+    assert [t.role for t in turns] == [TurnRole.USER]
+
+
+def test_re9_a_blocked_returned_failure_stays_blocked_and_is_degraded(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """Clause 4 and the Q2 semantic constraint: a verdict actually reached on a
+    failed response keeps its meaning — the block and its escalation stand —
+    and the RE-9 degraded classification still applies. The event is the
+    existing blocked one."""
+    response, event, turns, guardrails = _run_re9(
+        core,
+        fixture_context,
+        FixtureAdapter(text="That costs $9999.", error_type=RE9_RETURNED_FAILURE),
+        "re9-blocked-failure",
+    )
+    (verdict,) = guardrails.verdicts
+    assert verdict.blocked
+    assert response.blocked
+    assert response.degraded
+    assert response.text == ""
+    assert response.escalate == verdict.escalate
+    assert event.type == "runtime.turn_blocked"
+    assert [t.role for t in turns] == [TurnRole.USER]
+
+
+@pytest.mark.parametrize(
+    "adapter_kwargs",
+    [
+        {"text": "", "error_type": RE9_RETURNED_FAILURE},
+        {"text": "A routine examination is $80.", "error_type": RE9_RETURNED_FAILURE},
+        {"text": ""},
+    ],
+    ids=["returned_failure_empty", "returned_failure_with_text", "empty_answer"],
+)
+def test_re9_no_usable_answer_still_reaches_the_post_response_checkpoint(
+    core: CoreBundle, fixture_context: ResolvedContext, adapter_kwargs: dict
+) -> None:
+    """The Q2 implementation constraint: RE-9 adds no early exit between the
+    provider stage and the post-response checkpoint, which still receives the
+    provider's response exactly as returned. RE-9-Q2 stays unresolved."""
+    adapter = FixtureAdapter(**adapter_kwargs)
+    _, _, _, guardrails = _run_re9(core, fixture_context, adapter, "re9-checkpoint")
+    (seen,) = guardrails.seen
+    assert seen.text == adapter_kwargs["text"]
+    assert seen.error_type == adapter_kwargs.get("error_type")

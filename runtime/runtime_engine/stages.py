@@ -111,6 +111,17 @@ class Stage(Protocol):
         ...
 
 
+def _no_usable_answer(response: ProviderResponse) -> bool:
+    """RE-9: the provider stage yielded no usable answer.
+
+    True for a provider failure returned as a value (`error_type` set, whatever
+    its text) and for an empty answer. "Empty" is exactly `text == ""` — no
+    truthiness and no stripping: whether whitespace-only text counts is RE-9-Q1,
+    deliberately unresolved, and this check must not settle it.
+    """
+    return response.error_type is not None or response.text == ""
+
+
 # --- §14.2 step 1: resolve project + session ---------------------------------
 class SessionStage:
     """Records the incoming turn through the Session Manager (§12).
@@ -266,6 +277,12 @@ class PostResponseGuardrailStage:
     **Non-removable**, and §8.3 forbids skipping it *"to save latency or
     cost"*. A block ends the turn carrying no text: §8.3 assigns composing a
     safe alternative elsewhere, and this engine does not invent one (RE-5).
+
+    **RE-9.** A returned provider failure, or an empty answer, still reaches
+    this checkpoint — no early exit precedes it (RE-9-Q2 stays unresolved). If
+    the verdict blocks such a response, the block and its escalation stand as
+    they are, and the turn is also degraded, because the provider stage yielded
+    no usable answer.
     """
 
     __slots__ = ("_guardrails", "_context", "name")
@@ -282,7 +299,11 @@ class PostResponseGuardrailStage:
         )
         state.post_response = result
         if result.blocked:
-            state.outcome = RuntimeResponse(blocked=True, escalate=result.escalate)
+            state.outcome = RuntimeResponse(
+                blocked=True,
+                escalate=result.escalate,
+                degraded=_no_usable_answer(state.provider_response),
+            )
 
 
 # --- §14.2 step 6: workflow routing + state commit ---------------------------
@@ -383,6 +404,12 @@ class DeliveryStage:
     verdict were read. Authorized by GE-1's ruling (2026-09-05) as the one
     §14 change that ruling requires; no other escalation policy is introduced
     here, and whether an internal failure should escalate remains AUDIT-6.
+
+    **RE-9: a turn completes normally only when the provider stage yielded a
+    usable answer.** A provider failure returned as a value, or an empty answer,
+    is degraded instead: no text is delivered, no agent turn is recorded — the
+    same as every other path that yields no answer — and escalation is the same
+    union as above, never set by the failure itself.
     """
 
     __slots__ = ("_sessions", "name")
@@ -393,16 +420,20 @@ class DeliveryStage:
 
     def run(self, state: TurnState) -> None:
         assert state.provider_response is not None
+        escalate = any(
+            verdict is not None and verdict.escalate
+            for verdict in (state.pre_flight, state.post_response)
+        )
+        if _no_usable_answer(state.provider_response):
+            state.outcome = RuntimeResponse(escalate=escalate, degraded=True)
+            return
         text = state.provider_response.text
         self._sessions.append_turn(
             state.request.conversation_id, Turn(role=TurnRole.AGENT, content=text)
         )
         state.outcome = RuntimeResponse(
             text=text,
-            escalate=any(
-                verdict is not None and verdict.escalate
-                for verdict in (state.pre_flight, state.post_response)
-            ),
+            escalate=escalate,
             degraded=bool(state.bundle is not None and state.bundle.degraded),
         )
 
