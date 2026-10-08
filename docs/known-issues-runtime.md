@@ -12,12 +12,14 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Thirteen open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
-RE-3, RE-5, AUDIT-6, WR-2, RE-9, OB-4**, recorded during Modules 10, 11, 14 and
-15, the §14 post-implementation audit, the Step 4 roadmap audit of 2026-09-05,
-the WR-1 implementation audit of the same day, and the RE-5 customer-facing
-wording audit of 2026-10-08; RE-5's design is ruled and not implemented, and
-RE-9 and OB-4 were registered by that audit. **RE-8**, registered with the
+**Sixteen open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
+RE-3, RE-5, AUDIT-6, WR-2, RE-9, OB-4, PR-4, PI-1, PI-2**, recorded during
+Modules 10, 11, 14 and 15, the §14 post-implementation audit, the Step 4 roadmap
+audit of 2026-09-05, the WR-1 implementation audit of the same day, the RE-5
+customer-facing wording audit of 2026-10-08, and the RE-9 provider-outcome audit
+of the same day. The RE-5 audit ruled RE-5's design (not implemented) and
+registered RE-9 and OB-4; the RE-9 audit ruled RE-9's design (not implemented)
+and registered PR-4, PI-1 and PI-2. **RE-8**, registered with the
 `RuntimeResponse.escalate` semantics ruling of 2026-10-08, **closed on
 2026-10-08**. **WR-3**, registered with the workflow-scope (ROOT-C) ruling of
 2026-10-08, **closed on 2026-10-08**.
@@ -86,9 +88,12 @@ one class.
 | **R3-3** | **Missing Branding resolves to an empty overlay** | **Documentation / Reporting** |
 | **R3-4** | **`ResolvedContext` has no consumer yet** | **Additive Extension** |
 | **PA-3** | **`06_lead_qualification.md` is not assembled; its behaviour is delivered distributively** | **Documentation / Reporting** (was: Architecture Issue) |
+| **PI-1** | **The Gemini adapter cannot tell a vendor-side missing or filtered reply from a genuinely empty answer** | **Architecture Issue** |
+| **PI-2** | **No rule says when a provider failure is raised and when it is returned as `ProviderResponse.error_type`** | **Architecture Issue** |
 | **PR-1** | **§10.10 and §13.10 disagree about whether the secondary provider must be registered** | **Architecture Issue** |
 | **PR-2** | **The declared Model is required at routing time but not at validation** | **Documentation / Reporting** |
 | **PR-3** | **`ProviderRequest` deferred; sole ownership reserved to the Provider Registry** | **Additive Extension** |
+| **PR-4** | **A returned error-marked or empty `ProviderResponse` never triggers §10.9 failover** | **Architecture Issue** |
 | **TE-1** | **`ToolRequest` exists as a type with no writer** | **Documentation / Reporting** |
 | **TE-2** | **§11.12(c)'s retry scenario is unenforceable; no retry implemented** | **Architecture Issue** |
 | **TE-3** | **§11.2's integrations path unexecutable; §11.9's Resolver cross-reference diverges** | **Architecture Issue** |
@@ -104,7 +109,7 @@ one class.
 | **RE-6** | **A blocked answer is not recorded as an agent turn** | **Documentation / Reporting** |
 | **RE-7** | **§14 publishes no camelCase alias; the convention is unsettled** | **Documentation / Reporting** |
 | **RE-8** | **A positive escalation verdict can be lost before the final `RuntimeResponse`** | **Closed** — final escalation normalization in `handle_request` |
-| **RE-9** | **An empty or error-classified `ProviderResponse` is delivered as a normal completed turn; no module classifies that provider outcome** | **Architecture Issue** |
+| **RE-9** | **An empty or error-classified `ProviderResponse` is delivered as a normal completed turn; no module classifies that provider outcome** | **Architecture Issue** — design ruled, not implemented |
 | **AUDIT-1** | **Budget and provider are never proven to describe the same model** | **Closed** — resolved globally |
 | **AUDIT-2** | **Cross-project session/workflow contamination via shared stores** | **AMENDED** — resolved for the production activation path; **open outside it** (constructor escape hatch remains) |
 | **AUDIT-3** | **`transition_history` grows with no-op entries** | **Runtime Improvement** |
@@ -3081,6 +3086,9 @@ ruling, including WR-3 and RE-8.
 ### RE-9 — An empty or error-classified `ProviderResponse` is delivered as a normal completed turn
 
 **Class: Architecture Issue** · Registered 2026-10-08 (RE-5 audit, finding F1).
+**Design ruled — not implemented** (2026-10-08). The ruling is recorded under
+*"Registered with the RE-9 provider-outcome ruling, 2026-10-08"* below; RE-9 is
+not closed by it. The original entry below is retained unchanged.
 **Open.** A §14 / runtime outcome-semantics question. **This is not a wording
 problem**, and it is independent of RE-5.
 
@@ -3130,6 +3138,137 @@ reason embeds the caught exception's text.
 
 **Not changed now:** audit structures, the audit payload and the Guardrail
 Engine. No fix is implemented and none is proposed here.
+
+---
+
+## Registered with the RE-9 provider-outcome ruling, 2026-10-08
+
+One ruling on an existing issue, and three new gaps found by the same read-only
+audit (run against commit `abbd7b9`). The three new issues are independent of
+RE-9's outcome classification and of one another; none may be fixed under RE-9.
+
+**Identifiers.** Issues are prefixed by the module they concern. `PR-4` continues
+the Provider Registry (Module 10) series. Module 9 — the Provider Interface and
+its concrete adapters — had no register entry before, so `PI-1` and `PI-2` open a
+Provider Interface series. (The provider code's own labels, such as P-1, C-1a and
+E-1, are design notes in source, not register identifiers.)
+
+---
+
+### Ruling, 2026-10-08 — RE-9: when a provider outcome is a completed turn
+
+**Accepted architectural ruling. RE-9 is design ruled — not implemented. It is
+not closed.**
+
+> **A turn completes normally only when the provider stage yields a usable
+> answer.**
+
+1. A `ProviderResponse` with `error_type` set is a **provider failure**,
+   equivalent to a raised `ProviderError`, regardless of its `text`.
+2. A `ProviderResponse` with `error_type` unset and `text == ""` is **no usable
+   answer**. "Empty" means exactly `text == ""`. Whitespace-only text is
+   intentionally not ruled here.
+3. In both cases the **Runtime Engine** classifies the turn as **degraded** under
+   §14.9 and §14.12(c): `RuntimeResponse.text == ""` and `degraded=True`.
+   Provider text from a failed response is not delivered.
+4. `blocked` and `escalate` retain their frozen meanings. RE-9 never sets
+   `blocked` and never sets `escalate`. Any guardrail verdict that is actually
+   reached remains governed by the existing guardrail semantics and RE-8. Whether
+   technical failures should escalate remains AUDIT-6.
+5. Such a turn uses the existing degraded runtime outcome and event semantics. No
+   new event type, payload field, or `RuntimeResponse` field is introduced.
+6. No agent turn is recorded for such a turn, consistent with the existing
+   no-answer and degraded paths.
+7. Customer-facing wording remains governed by RE-5. The channel adapter owns
+   wording for the non-answer turn, using the existing outcome flags. Provider
+   error text, exception messages, and internal diagnostics never become
+   customer-facing wording.
+8. The ruling does not alter the provider contract, the Provider Registry's
+   failover policy, Guardrail Engine ownership, `RuntimeResponse`, `TurnState`,
+   §14.2's stage ordering, or any existing architecture boundary.
+
+**Unresolved under RE-9 — deliberately not decided by this ruling:**
+
+* **RE-9-Q1 — whitespace-only text.** Whether a `ProviderResponse` whose `text`
+  is non-empty but whitespace-only counts as empty. Under clause 2 it does not
+  meet the definition of empty; whether it should is an open question.
+* **RE-9-Q2 — the post-response checkpoint on a failed response.** Whether the
+  post-response guardrail checkpoint must run on a response already classified
+  as a provider failure. A raised `ProviderError` never reaches that checkpoint;
+  §8.3 forbids skipping it *"to save latency or cost"*. Clause 4 covers only a
+  verdict that is actually reached.
+
+Neither question may be settled implicitly by an implementation of RE-9.
+
+**Related, not blocking:** AUDIT-6 (escalation of technical failures), RE-6 (the
+agent-history reasoning clause 6 follows), RE-5 (wording, unchanged), PR-4, PI-1
+and PI-2 (below). `docs/runtime-specification.md` is not changed; an
+implementation would be one §14 behavioural change authorized by register
+ruling, as for GE-1, RE-8 and WR-3.
+
+---
+
+### PR-4 — A returned error-marked or empty `ProviderResponse` never triggers §10.9 failover
+
+**Class: Architecture Issue** · Registered 2026-10-08 (RE-9 audit). **Open.**
+A Provider Registry / failover issue — **not** an RE-9 outcome-classification
+issue.
+
+§10.9: *"Primary fails → attempt configured secondary → if none configured or it
+also fails, surface a clear 'technical difficulties' outcome to Runtime Engine."*
+
+`ProviderRegistry.generate_with_fallback` fails over only when the primary
+**raises** a `ProviderError` whose class is in `FAILOVER_ERROR_TYPES` (rate
+limit, timeout, service unavailable). A primary that **returns** a
+`ProviderResponse` — whether its `error_type` is set or its `text` is empty — is
+passed through unexamined, and the secondary is never attempted.
+
+The architecture does not say whether a returned failure, or a returned empty
+answer, is a "primary failure" for §10.9's purposes. RE-9's classification is
+unaffected either way: the Runtime Engine sees only the response the Registry
+finally returns. No fix is implemented and none is proposed here.
+
+---
+
+### PI-1 — The Gemini adapter cannot tell a vendor-side missing or filtered reply from a genuinely empty answer
+
+**Class: Architecture Issue** · Registered 2026-10-08 (RE-9 audit). **Open.**
+A Provider Interface (Module 9) adapter-normalization question under §9.9 and the
+conformance suite — **not** to be solved as part of RE-9.
+
+`GeminiAdapter._normalise_response` maps `response.text is None` to `text=""`
+and returns it as a success. It does not inspect why the reply is missing — for
+example, no candidate, or a candidate withheld by the vendor's own filtering — so
+a vendor-side missing or filtered response is indistinguishable from a genuinely
+empty model answer. Pinned by
+`test_an_empty_candidate_is_an_empty_string_not_a_crash`.
+
+The architecture does not say whether such a case should be normalised to a
+`ProviderError`, a returned `error_type`, or an empty successful response, nor
+whether the conformance suite should require a particular answer. Under RE-9 the
+runtime outcome is degraded in every one of those representations. No fix is
+implemented and none is proposed here.
+
+---
+
+### PI-2 — No rule says when a provider failure is raised and when it is returned as `ProviderResponse.error_type`
+
+**Class: Architecture Issue** · Registered 2026-10-08 (RE-9 audit). **Open.**
+A provider-contract clarification.
+
+Two representations of a provider failure are both permitted today:
+
+* **Raised.** The Provider Interface's `generate` contract requires a normalised
+  `ProviderError` to be raised rather than a vendor exception escaping, and the
+  Gemini adapter and the Provider Registry express every failure this way.
+* **Returned.** The frozen `ProviderResponse` data-model row carries a nullable
+  `errorType`, `ProviderResponse.failed` treats a set `error_type` as failure,
+  and `check_generate_returns_normalised_response` accepts a returned
+  `ProviderResponse` whose `error_type` is set.
+
+The architecture does not standardize when each representation should be used.
+RE-9 rules how the runtime classifies both; it does not choose between them, and
+neither does this entry. No fix is implemented and none is proposed here.
 
 ---
 
