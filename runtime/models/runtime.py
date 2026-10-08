@@ -64,8 +64,8 @@ class RuntimeResponse:
       or handoff instruction, not conversation-level handoff state, not proof
       that a handoff occurred, and does not represent escalation the model
       performs in conversation. A non-guardrail source of escalation requires
-      amending this definition. Some early-exit paths currently lose a positive
-      verdict before this response is built; that propagation gap is RE-8.
+      amending this definition. `RuntimeEngine.handle_request` guarantees it on
+      every way a turn ends (RE-8).
     * `degraded` — the turn completed by a reduced path: an internal failure was
       contained (§14.9), or resolution reported degraded capabilities.
 
