@@ -3200,6 +3200,46 @@ not closed.**
 
 Neither question may be settled implicitly by an implementation of RE-9.
 
+#### Audit of RE-9-Q1 and RE-9-Q2, 2026-10-08 — both remain unresolved
+
+A read-only audit against commit `58f6417` found that the architecture does not
+answer either question. **Both remain unresolved RE-9 questions; no new issue is
+registered for either.** The eight-clause ruling above is unchanged, and RE-9
+remains **design ruled — not implemented**. Neither question blocks implementing
+RE-9, provided the constraints below hold.
+
+**RE-9-Q1 — unresolved.** The frozen specification defines no content rule for
+`ProviderResponse.text`, and no rule defines a "deliverable" or "usable" answer
+beyond non-emptiness. Elsewhere the runtime treats whitespace both ways —
+document and configuration models treat whitespace-only content as empty, while
+`RuntimeResponse`'s blocked-text invariant and RE-5 clause 1 treat any non-empty
+string as text — and no rule ties either convention to provider output.
+
+> **Implementation constraint (Q1).** An RE-9 implementation must treat empty
+> provider text exactly as `text == ""`. It must not use `.strip()`, truthiness,
+> or any newly invented "blank" or "meaningful text" rule. This preserves Q1 as
+> an unresolved architecture decision.
+
+**RE-9-Q2 — unresolved.** §8.3 forbids skipping the post-response check *"to save
+latency or cost"*, and §14 makes the stage non-removable from composition, but no
+clause says whether the checkpoint must run on every `ProviderResponse` or only on
+one that could be delivered. Today a raised `ProviderError` never reaches the
+checkpoint, while a returned failed `ProviderResponse` does. Whether that
+distinction is intended is part of **PI-2**, which could make Q2 moot (if
+failures must always be raised) but does not answer it. **PR-4** changes which
+response reaches the checkpoint, not whether it must run.
+
+> **Implementation constraint (Q2).** An RE-9 implementation must not introduce a
+> new early exit between `ProviderStage` and `PostResponseGuardrailStage` that
+> would implicitly decide Q2. The existing checkpoint path must remain intact
+> unless a future architecture ruling explicitly decides otherwise.
+>
+> **Semantic constraint (Q2).** If a guardrail verdict is actually reached on a
+> failed provider response, RE-9 must preserve the existing guardrail semantics
+> (clause 4, RE-8) while still applying the RE-9 degraded classification
+> (clause 3). The implementation must not silently convert Q2 into a new
+> stage-ordering decision.
+
 **Related, not blocking:** AUDIT-6 (escalation of technical failures), RE-6 (the
 agent-history reasoning clause 6 follows), RE-5 (wording, unchanged), PR-4, PI-1
 and PI-2 (below). `docs/runtime-specification.md` is not changed; an
