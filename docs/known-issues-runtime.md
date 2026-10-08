@@ -12,11 +12,12 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Twelve open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
-RE-3, RE-5, RE-8, AUDIT-6, WR-2**, recorded during Modules 10, 11, 14 and 15,
-the §14 post-implementation audit, the Step 4 roadmap audit of 2026-09-05, the
-WR-1 implementation audit of the same day, and the `RuntimeResponse.escalate`
-semantics ruling of 2026-10-08.
+**Eleven open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
+RE-3, RE-5, AUDIT-6, WR-2**, recorded during Modules 10, 11, 14 and 15,
+the §14 post-implementation audit, the Step 4 roadmap audit of 2026-09-05, and
+the WR-1 implementation audit of the same day. **RE-8**, registered with the
+`RuntimeResponse.escalate` semantics ruling of 2026-10-08, **closed on
+2026-10-08**.
 **WR-1 and GE-1 are not new defects** — both were disclosed in source and in
 README from their own module milestones, and both are pinned by tests; what they
 lacked until 2026-09-05 was a register identifier, an owner and a closure
@@ -99,7 +100,7 @@ one class.
 | **RE-5** | **§14 composes no customer-facing fallback text** | **Architecture Issue** |
 | **RE-6** | **A blocked answer is not recorded as an agent turn** | **Documentation / Reporting** |
 | **RE-7** | **§14 publishes no camelCase alias; the convention is unsettled** | **Documentation / Reporting** |
-| **RE-8** | **A positive escalation verdict can be lost before the final `RuntimeResponse`** | **Architecture Issue** |
+| **RE-8** | **A positive escalation verdict can be lost before the final `RuntimeResponse`** | **Closed** — final escalation normalization in `handle_request` |
 | **AUDIT-1** | **Budget and provider are never proven to describe the same model** | **Closed** — resolved globally |
 | **AUDIT-2** | **Cross-project session/workflow contamination via shared stores** | **AMENDED** — resolved for the production activation path; **open outside it** (constructor escape hatch remains) |
 | **AUDIT-3** | **`transition_history` grows with no-op entries** | **Runtime Improvement** |
@@ -2777,8 +2778,9 @@ requires amending the definition. Recorded on the field in
 
 ### RE-8 — A positive escalation verdict can be lost before the final `RuntimeResponse`
 
-**Class: Architecture Issue** · Registered 2026-10-08. **Open; design ruled
-(below), not implemented.**
+**Class: Architecture Issue** · Registered 2026-10-08.
+✅ **CLOSED 2026-10-08** — see the resolution note after the ruling below. The
+description that follows is the state as registered, retained for history.
 
 The current runtime does not yet conform to the ruling above on every
 turn-ending path. A Guardrail Engine checkpoint can return `escalate=True` during
@@ -2859,6 +2861,27 @@ source or reason fields; `RuntimeResponse` fields; pipeline order;
 **Untouched frozen decisions:** the `RuntimeResponse.escalate` definition, GE-1
 policy, WR-1, `RuntimeResponse`'s four-field model, §14 pipeline order, §15's
 pure-recorder principle, Guardrail Engine semantics, and every earlier freeze.
+
+#### ✅ **RESOLVED 2026-10-08 — RE-8 implemented as ruled**
+
+`RuntimeEngine.handle_request` now performs the final escalation normalization
+after the outcome is settled — exception containment and the no-outcome fallback
+included — and before `_observe_outcome` and `return`. It reads the two existing
+Guardrail Engine verdicts, `state.pre_flight` and `state.post_response`; if
+either has `escalate=True`, the final response is normalized to `escalate=True`.
+Only `False → True`: `text`, `blocked` and `degraded` are carried over unchanged,
+and a failure never creates escalation.
+
+No `TurnState` field, stage or Guardrail Engine logic was introduced, and
+`DeliveryStage` is unchanged. The audit observes the normalized response, so its
+`escalate` value now matches the final `RuntimeResponse` on every path.
+
+Proven by thirteen tests in `tests/runtime_engine/`, covering the required
+matrix; eleven fail against the unfixed engine. Full offline suite: **1104
+passed, 16 skipped**.
+
+**Unchanged and still open:** AUDIT-6, RE-5, the §8.12(a) / GE-1 tension, and
+every other issue.
 
 ---
 
