@@ -24,7 +24,9 @@ PR-4, PI-1 and PI-2. **RE-8**, registered with the
 2026-10-08**. **WR-3**, registered with the workflow-scope (ROOT-C) ruling of
 2026-10-08, **closed on 2026-10-08**. **RE-9**, registered by the RE-5 audit of
 2026-10-08, **closed on 2026-10-09**; its two open questions, **RE-9-Q1** and
-**RE-9-Q2**, remain unresolved.
+**RE-9-Q2**, remain unresolved. **PI-2**'s design was ruled on 2026-10-09
+(raised-only provider failures; not implemented); that ruling makes RE-9-Q2
+moot only for conforming adapters and narrows PR-4, both of which stay open.
 **WR-1 and GE-1 are not new defects** — both were disclosed in source and in
 README from their own module milestones, and both are pinned by tests; what they
 lacked until 2026-09-05 was a register identifier, an owner and a closure
@@ -91,7 +93,7 @@ one class.
 | **R3-4** | **`ResolvedContext` has no consumer yet** | **Additive Extension** |
 | **PA-3** | **`06_lead_qualification.md` is not assembled; its behaviour is delivered distributively** | **Documentation / Reporting** (was: Architecture Issue) |
 | **PI-1** | **The Gemini adapter cannot tell a vendor-side missing or filtered reply from a genuinely empty answer** | **Architecture Issue** |
-| **PI-2** | **No rule says when a provider failure is raised and when it is returned as `ProviderResponse.error_type`** | **Architecture Issue** |
+| **PI-2** | **No rule says when a provider failure is raised and when it is returned as `ProviderResponse.error_type`** | **Architecture Issue** — design ruled, not implemented |
 | **PR-1** | **§10.10 and §13.10 disagree about whether the secondary provider must be registered** | **Architecture Issue** |
 | **PR-2** | **The declared Model is required at routing time but not at validation** | **Documentation / Reporting** |
 | **PR-3** | **`ProviderRequest` deferred; sole ownership reserved to the Provider Registry** | **Additive Extension** |
@@ -3304,6 +3306,12 @@ answer, is a "primary failure" for §10.9's purposes. RE-9's classification is
 unaffected either way: the Runtime Engine sees only the response the Registry
 finally returns. No fix is implemented and none is proposed here.
 
+**Narrowed by the PI-2 ruling, 2026-10-09 — still open.** A conforming adapter
+reports every operational failure by raising, so for conforming adapters PR-4
+reduces to the returned **empty** answer (`error_type` unset, `text == ""`). How
+the Registry should treat a returned `error_type` from a non-conforming adapter
+is not decided, and no failover policy is decided for either case.
+
 ---
 
 ### PI-1 — The Gemini adapter cannot tell a vendor-side missing or filtered reply from a genuinely empty answer
@@ -3329,8 +3337,10 @@ implemented and none is proposed here.
 
 ### PI-2 — No rule says when a provider failure is raised and when it is returned as `ProviderResponse.error_type`
 
-**Class: Architecture Issue** · Registered 2026-10-08 (RE-9 audit). **Open.**
-A provider-contract clarification.
+**Class: Architecture Issue** · Registered 2026-10-08 (RE-9 audit).
+**Design ruled — not implemented** (2026-10-09). The ruling follows the original
+entry below; PI-2 is not closed by it. The original entry is retained unchanged.
+**Open.** A provider-contract clarification.
 
 Two representations of a provider failure are both permitted today:
 
@@ -3345,6 +3355,50 @@ Two representations of a provider failure are both permitted today:
 The architecture does not standardize when each representation should be used.
 RE-9 rules how the runtime classifies both; it does not choose between them, and
 neither does this entry. No fix is implemented and none is proposed here.
+
+#### Ruling, 2026-10-09 — PI-2: provider failures are raised
+
+**Accepted architectural ruling (Option 1, raised-only). PI-2 is design ruled —
+not implemented. It is not closed.**
+
+1. **Raised only.** A conforming Provider adapter must report operational
+   provider failures by raising the standard `ProviderError`. It must not return
+   `ProviderResponse(error_type=...)` as its failure-reporting mechanism.
+2. **The frozen field stays.** `ProviderResponse.error_type` and the frozen
+   `ProviderResponse` data-model row are unchanged.
+3. **RE-9 clause 1 stays as a safety net.** The Runtime Engine keeps classifying
+   a returned `ProviderResponse` with `error_type` set as a provider failure (a
+   degraded turn). That defensive classification does not make such a response
+   conforming adapter behaviour.
+4. **RE-9-Q2 is moot only for conforming adapters.** A conforming adapter cannot
+   produce a returned provider failure, so for conforming adapters the question
+   does not arise. RE-9-Q2 itself stays unresolved: it still applies to a
+   returned failure that reaches the RE-9 safety net from non-conforming code,
+   and no wider question of post-response guardrail behaviour for unsuccessful
+   responses — including an exact-empty answer — is decided here.
+5. **PR-4 is narrowed, not decided.** For conforming adapters PR-4 reduces to the
+   returned empty answer; see the note in PR-4's entry. No failover policy is
+   decided.
+6. **Workflow transitions on no-usable-answer turns stay separate and
+   unresolved.** Today a returned failure or an empty answer still reaches
+   `WorkflowStage`, which may commit a transition; a raised failure does not.
+   This ruling does not decide empty-success behaviour, turn atomicity or
+   workflow rollback.
+
+**Unchanged:** the Provider Interface signature, `ProviderResponse`, the Provider
+Registry and its failover set, the Gemini adapter (which already raises every
+failure), RE-9's ruling and implementation, the Runtime Engine and §14.2's stage
+order, and `docs/runtime-specification.md`. PI-1's open choice no longer includes
+a returned `error_type` for a conforming adapter; PI-1 is otherwise not decided.
+
+**Future implementation task — separately authorized, not part of this ruling.**
+Make `check_generate_returns_normalised_response` in `runtime/provider/conformance.py`
+fail an adapter whose `generate` returns a `ProviderResponse` with `error_type`
+set, and add the minimal test in `tests/provider/` proving that such an adapter
+fails conformance while a raising adapter still passes. Conformance runs one
+sample call per adapter, so it enforces the rule at registration time; RE-9 clause
+1 remains the runtime safety net. **PI-2 may close when that task is implemented
+and verified.**
 
 ---
 
