@@ -8,6 +8,12 @@ consumer of `CoreBundle` finally has a producer.
 
     loader = CoreLoader(FilesystemCoreSource("core"))
     core = loader.get_core_bundle()   # cached for the process lifetime
+
+`bundled_core_root()` returns the Core that ships with this copy of the
+framework — inside an installed package or at a checkout's root — so a caller
+need not depend on the working directory:
+
+    loader = CoreLoader(FilesystemCoreSource(bundled_core_root()))
 """
 
 from runtime.core_loader.core_loader import CoreLoader
@@ -26,7 +32,11 @@ from runtime.core_loader.manifest import (
     REQUIRED_TOOL_CONTRACTS,
     REQUIRED_WORKFLOWS,
 )
-from runtime.core_loader.sources import CoreSource, FilesystemCoreSource
+from runtime.core_loader.sources import (
+    CoreSource,
+    FilesystemCoreSource,
+    bundled_core_root,
+)
 
 __all__ = [
     "REQUIRED_FILES",
@@ -43,4 +53,5 @@ __all__ = [
     "MalformedCoreDocumentError",
     "MissingCoreFileError",
     "PlaybookContentLeakError",
+    "bundled_core_root",
 ]

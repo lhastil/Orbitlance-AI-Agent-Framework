@@ -1,3 +1,9 @@
+[build-system]
+# 64 is the first setuptools with PEP 660 editable installs; recursive `**`
+# package-data globs need 62.3.
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "orbitlance-runtime"
 version = "0.1.0"
@@ -11,6 +17,49 @@ dev = ["pytest>=8", "ruff>=0.6"]
 # SDK: `dependencies` above stays empty, and only the Gemini adapter subtree
 # imports this. A second provider adds a second extra, never a base dependency.
 gemini = ["google-genai>=1.0"]
+
+# Packaging. The repository root holds `runtime/` (the code) beside `core/`,
+# `projects/` and `assets/`, so automatic discovery refuses the flat layout.
+#
+# * `runtime` and its subpackages are listed explicitly. `find` cannot be used:
+#   it ignores `package-dir` mappings, and the mapping below is what ships Core.
+#   `tests/test_packaging.py` fails if this list drifts from the source tree.
+# * `core/` is framework content the Core Loader reads at runtime, so it ships
+#   inside the package as `runtime/_core/`. `bundled_core_root()` locates it, in
+#   an installed wheel and in a source checkout alike.
+# * `projects/` is per-client data supplied by the caller (`projects_root`), and
+#   `assets/` holds only placeholders; neither is part of the distribution.
+[tool.setuptools]
+packages = [
+    "runtime",
+    "runtime._core",
+    "runtime.assembler",
+    "runtime.budget",
+    "runtime.core_loader",
+    "runtime.guardrail",
+    "runtime.loader",
+    "runtime.models",
+    "runtime.observability",
+    "runtime.observability.adapters",
+    "runtime.provider",
+    "runtime.provider.adapters",
+    "runtime.provider.adapters.gemini",
+    "runtime.provider_registry",
+    "runtime.resolver",
+    "runtime.runtime_engine",
+    "runtime.session",
+    "runtime.tool_executor",
+    "runtime.validation",
+    "runtime.validation.rules",
+    "runtime.workflow_router",
+    "runtime.workflow_state",
+]
+
+[tool.setuptools.package-dir]
+"runtime._core" = "core"
+
+[tool.setuptools.package-data]
+"runtime._core" = ["**/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

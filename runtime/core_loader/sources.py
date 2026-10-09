@@ -23,7 +23,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from runtime.core_loader.errors import CoreReadError
+from runtime.core_loader.errors import CoreDirectoryNotFoundError, CoreReadError
 
 
 @runtime_checkable
@@ -107,3 +107,23 @@ class FilesystemCoreSource:
             return path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             raise CoreReadError(str(path), exc) from exc
+
+
+def bundled_core_root() -> Path:
+    """The `core/` directory that ships with this copy of the framework.
+
+    An installed distribution carries Core inside the package as
+    `runtime/_core/`; a source checkout (including an editable install) keeps it
+    at the repository root as `core/`. Both are fixed locations relative to this
+    module, so the answer never depends on the current working directory.
+
+    Only locates; it reads nothing. Pass the result to `FilesystemCoreSource`.
+    Raises `CoreDirectoryNotFoundError` naming every location checked rather
+    than guessing — the same posture as the Core Loader itself.
+    """
+    package_root = Path(__file__).resolve().parent.parent
+    candidates = (package_root / "_core", package_root.parent / "core")
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    raise CoreDirectoryNotFoundError(" or ".join(str(c) for c in candidates))
