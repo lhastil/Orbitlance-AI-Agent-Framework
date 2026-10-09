@@ -3395,10 +3395,11 @@ a returned `error_type` for a conforming adapter; PI-1 is otherwise not decided.
 Make `check_generate_returns_normalised_response` in `runtime/provider/conformance.py`
 fail an adapter whose `generate` returns a `ProviderResponse` with `error_type`
 set, and add the minimal test in `tests/provider/` proving that such an adapter
-fails conformance while a raising adapter still passes. Conformance runs one
-sample call per adapter, so it enforces the rule at registration time; RE-9 clause
-1 remains the runtime safety net. **PI-2 may close when that task is implemented
-and verified.**
+fails conformance while a raising adapter still passes. The rule is checked when
+the conformance suite is explicitly run, which the adapter author must do before
+registration; the Provider Registry does not run the suite itself (D-7). RE-9
+clause 1 remains the runtime safety net. **PI-2 may close when that task is
+implemented and verified.**
 
 ---
 

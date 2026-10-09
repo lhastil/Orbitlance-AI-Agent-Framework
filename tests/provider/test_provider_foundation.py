@@ -295,6 +295,31 @@ def test_suite_catches_an_adapter_that_mutates_the_bundle() -> None:
     assert "mutated" in failures
 
 
+def test_suite_rejects_a_returned_failure_but_accepts_success_and_raising() -> None:
+    """PI-2: a provider failure is raised, never returned as `error_type`."""
+    from runtime.provider.conformance import check_generate_returns_normalised_response
+
+    class ReturningFailure(ConformingProvider):
+        """Conforming in every other respect, so only this check can fail."""
+
+        def generate(self, prompt_bundle, history) -> ProviderResponse:
+            response = super().generate(prompt_bundle, history)
+            return ProviderResponse(
+                text=response.text, error_type=ProviderErrorType.SERVICE_UNAVAILABLE
+            )
+
+    class Declining(ConformingProvider):
+        def generate(self, prompt_bundle, history) -> ProviderResponse:  # noqa: ARG002
+            raise ProviderUnavailableError("down")
+
+    (failure,) = run_conformance(ReturningFailure()).failures
+    assert failure.startswith("check_generate_returns_normalised_response:")
+    assert "must be raised" in failure
+
+    check_generate_returns_normalised_response(ConformingProvider())
+    check_generate_returns_normalised_response(Declining())
+
+
 def test_suite_catches_non_boolean_capability_flags() -> None:
     class Sloppy:
         def get_capabilities(self):

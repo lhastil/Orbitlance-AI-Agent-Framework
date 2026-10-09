@@ -171,6 +171,14 @@ def check_generate_returns_normalised_response(provider: ProviderInterface) -> N
     Declining is legitimate — an adapter may reject for reasons the suite cannot
     arrange. What is not legitimate is returning something that is not a
     `ProviderResponse`, or an `error_type` outside the normalised set.
+
+    **PI-2: failures are raised, never returned.** A conforming adapter reports a
+    provider failure by raising a normalised `ProviderError`; a returned
+    response with `error_type` set fails here. The field itself stays in the
+    frozen model, and the Runtime Engine still classifies such a response as a
+    failure (RE-9 clause 1) — a safety net, not conforming behaviour. The rule is
+    checked only when this suite is explicitly run, which the adapter author must
+    do before registration; the Provider Registry does not run it (D-7).
     """
     try:
         response = provider.generate(sample_bundle(), sample_history())
@@ -182,6 +190,12 @@ def check_generate_returns_normalised_response(provider: ProviderInterface) -> N
         response.error_type, ProviderErrorType
     ):
         raise ConformanceError("error_type is not a normalised ProviderErrorType")
+    if response.error_type is not None:
+        raise ConformanceError(
+            f"generate returned a failure (error_type={response.error_type.value}) "
+            "instead of raising it; a provider failure must be raised as a "
+            "ProviderError (PI-2)"
+        )
 
 
 def check_bundle_is_not_mutated(provider: ProviderInterface) -> None:
