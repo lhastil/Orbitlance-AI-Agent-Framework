@@ -644,6 +644,20 @@ def test_a_broken_response_object_normalises_rather_than_crashing() -> None:
     assert caught.value.error_type is ProviderErrorType.UNKNOWN
 
 
+def test_a_non_string_response_text_normalises_rather_than_passing_through() -> None:
+    """E-1: text that is not a string is an unreadable answer, not a response."""
+
+    class NonStringText:
+        @property
+        def text(self):
+            return 123
+
+    adapter = an_adapter(response=NonStringText())
+    with pytest.raises(ProviderError) as caught:
+        adapter.generate(a_bundle(), ())
+    assert caught.value.error_type is ProviderErrorType.UNKNOWN
+
+
 def test_no_raw_sdk_exception_escapes_generate() -> None:
     adapter = an_adapter(generate_raises=StubApiError(500, "boom"))
     with pytest.raises(ProviderError):

@@ -827,6 +827,40 @@ def test_10_a_blocked_response_never_carries_text() -> None:
         RuntimeResponse(text="leaked", blocked=True)
 
 
+def test_10_an_ordinary_post_response_block_is_not_degraded(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """`blocked` and `degraded` stay independent: a guardrail blocking a usable
+    answer is a safety decision, not an outage. Only a provider result with no
+    usable answer (RE-9) makes a blocked turn degraded as well."""
+    sessions = SessionManager()
+    sink = RecordingSink()
+    registry = ProviderRegistry().register(
+        FixtureAdapter(text="A root canal is $4,321.")
+    )
+    engine = RuntimeEngine(
+        resolved_context=fixture_context,
+        validation=validation_for(core, registry),
+        core=core,
+        sessions=sessions,
+        guardrails=GuardrailEngine(core),
+        providers=registry,
+        router=WorkflowRouter(),
+        states=WorkflowStateManager(),
+        tools=ToolExecutor(),
+        audit=sink,
+    )
+    response = engine.handle_request(request())
+    assert response.blocked
+    assert not response.degraded
+    assert response.text == ""
+    (event,) = sink.logged
+    assert event.type == "runtime.turn_blocked"
+    assert event.payload["degraded"] == "False"
+    turns = sessions.get_context("conv-1").turns
+    assert [t.role for t in turns] == [TurnRole.USER]
+
+
 def test_11_an_escalating_guardrail_sets_escalate(
     core: CoreBundle, fixture_context: ResolvedContext
 ) -> None:
@@ -2024,6 +2058,55 @@ def test_re8_a_stored_post_response_verdict_survives_a_later_failure(
     assert response.escalate and response.degraded
     assert sink.logged[0].payload["escalate"] == "True"
     assert sink.logged[0].payload["failed_stage"] == "workflow"
+
+
+def test_re8_the_real_post_response_stage_stores_its_escalation(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """The real `PostResponseGuardrailStage` records a non-blocking escalating
+    verdict, so the frozen `escalate` definition holds without stage
+    substitution. Only the Guardrail Engine is doubled: `GuardrailResult`
+    permits `escalate=True` without a block, though no production post-response
+    rule produces one today. The answer is delivered as normal."""
+    from runtime.models.guardrail import Checkpoint, GuardrailResult
+
+    class EscalatingPostResponse(GuardrailEngine):
+        def __init__(self, core: CoreBundle) -> None:
+            super().__init__(core)
+            self.calls = 0
+
+        def check_post_response(self, response, resolved_context):
+            del response, resolved_context
+            self.calls += 1
+            return GuardrailResult(checkpoint=Checkpoint.POST_RESPONSE, escalate=True)
+
+    sessions = SessionManager()
+    sink = RecordingSink()
+    guardrails = EscalatingPostResponse(core)
+    registry = ProviderRegistry().register(FixtureAdapter())
+    engine = RuntimeEngine(
+        resolved_context=fixture_context,
+        validation=validation_for(core, registry),
+        core=core,
+        sessions=sessions,
+        guardrails=guardrails,
+        providers=registry,
+        router=WorkflowRouter(),
+        states=WorkflowStateManager(),
+        tools=ToolExecutor(),
+        audit=sink,
+    )
+    response = engine.handle_request(request())
+    assert guardrails.calls == 1
+    assert response.escalate
+    assert not response.blocked
+    assert not response.degraded
+    assert response.text == ANSWER
+    (event,) = sink.logged
+    assert event.type == "runtime.turn_completed"
+    assert event.payload["escalate"] == "True"
+    turns = sessions.get_context("conv-1").turns
+    assert [t.role for t in turns] == [TurnRole.USER, TurnRole.AGENT]
 
 
 def test_re8_the_no_outcome_path_preserves_escalation(
