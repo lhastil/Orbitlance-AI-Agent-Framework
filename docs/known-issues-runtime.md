@@ -12,17 +12,19 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Sixteen open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
-RE-3, RE-5, AUDIT-6, WR-2, RE-9, OB-4, PR-4, PI-1, PI-2**, recorded during
+**Fifteen open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
+RE-3, RE-5, AUDIT-6, WR-2, OB-4, PR-4, PI-1, PI-2**, recorded during
 Modules 10, 11, 14 and 15, the §14 post-implementation audit, the Step 4 roadmap
 audit of 2026-09-05, the WR-1 implementation audit of the same day, the RE-5
 customer-facing wording audit of 2026-10-08, and the RE-9 provider-outcome audit
 of the same day. The RE-5 audit ruled RE-5's design (not implemented) and
-registered RE-9 and OB-4; the RE-9 audit ruled RE-9's design (not implemented)
-and registered PR-4, PI-1 and PI-2. **RE-8**, registered with the
+registered RE-9 and OB-4; the RE-9 audit ruled RE-9's design and registered
+PR-4, PI-1 and PI-2. **RE-8**, registered with the
 `RuntimeResponse.escalate` semantics ruling of 2026-10-08, **closed on
 2026-10-08**. **WR-3**, registered with the workflow-scope (ROOT-C) ruling of
-2026-10-08, **closed on 2026-10-08**.
+2026-10-08, **closed on 2026-10-08**. **RE-9**, registered by the RE-5 audit of
+2026-10-08, **closed on 2026-10-09**; its two open questions, **RE-9-Q1** and
+**RE-9-Q2**, remain unresolved.
 **WR-1 and GE-1 are not new defects** — both were disclosed in source and in
 README from their own module milestones, and both are pinned by tests; what they
 lacked until 2026-09-05 was a register identifier, an owner and a closure
@@ -109,7 +111,7 @@ one class.
 | **RE-6** | **A blocked answer is not recorded as an agent turn** | **Documentation / Reporting** |
 | **RE-7** | **§14 publishes no camelCase alias; the convention is unsettled** | **Documentation / Reporting** |
 | **RE-8** | **A positive escalation verdict can be lost before the final `RuntimeResponse`** | **Closed** — final escalation normalization in `handle_request` |
-| **RE-9** | **An empty or error-classified `ProviderResponse` is delivered as a normal completed turn; no module classifies that provider outcome** | **Architecture Issue** — design ruled, not implemented |
+| **RE-9** | **An empty or error-classified `ProviderResponse` is delivered as a normal completed turn; no module classifies that provider outcome** | **Closed** — returned failures and exact-empty answers become degraded turns |
 | **AUDIT-1** | **Budget and provider are never proven to describe the same model** | **Closed** — resolved globally |
 | **AUDIT-2** | **Cross-project session/workflow contamination via shared stores** | **AMENDED** — resolved for the production activation path; **open outside it** (constructor escape hatch remains) |
 | **AUDIT-3** | **`transition_history` grows with no-op entries** | **Runtime Improvement** |
@@ -3086,9 +3088,8 @@ ruling, including WR-3 and RE-8.
 ### RE-9 — An empty or error-classified `ProviderResponse` is delivered as a normal completed turn
 
 **Class: Architecture Issue** · Registered 2026-10-08 (RE-5 audit, finding F1).
-**Design ruled — not implemented** (2026-10-08). The ruling is recorded under
-*"Registered with the RE-9 provider-outcome ruling, 2026-10-08"* below; RE-9 is
-not closed by it. The original entry below is retained unchanged.
+✅ **CLOSED 2026-10-09** — see the resolution note after the ruling below. The
+description that follows is the state as registered, retained for history.
 **Open.** A §14 / runtime outcome-semantics question. **This is not a wording
 problem**, and it is independent of RE-5.
 
@@ -3239,6 +3240,41 @@ response reaches the checkpoint, not whether it must run.
 > (clause 4, RE-8) while still applying the RE-9 degraded classification
 > (clause 3). The implementation must not silently convert Q2 into a new
 > stage-ordering decision.
+
+#### ✅ **RESOLVED 2026-10-09 — RE-9 implemented as ruled**
+
+Implemented in commit `a348675`, in `runtime/runtime_engine/stages.py`.
+
+A private predicate classifies a provider response as having no usable answer
+exactly when `error_type is not None` or `text == ""`. It uses neither stripping
+nor truthiness.
+
+* **`DeliveryStage`:** such a response becomes a degraded turn. `text` is `""`,
+  no agent turn is recorded, `blocked` is not set, and `escalate` retains the
+  existing union of guardrail verdicts. The event is the existing
+  `runtime.turn_degraded`, with no `failed_stage`.
+* **`PostResponseGuardrailStage`:** if the existing checkpoint blocks such a
+  response, the block and the guardrail's own `escalate` value are preserved,
+  and the turn is also degraded. The event remains `runtime.turn_blocked`.
+* **Unchanged:** ordinary answers; the provider contract and `ProviderResponse`;
+  Provider Registry failover; `RuntimeResponse` shape; `TurnState`; `engine.py`,
+  including the RE-8 repair and outcome observer; event names and payload keys;
+  and §14.2 stage order. No early exit was added before the post-response
+  checkpoint.
+
+**Still unresolved:**
+
+* **RE-9-Q1:** whitespace-only text semantics.
+* **RE-9-Q2:** post-response checkpoint policy for failed provider responses.
+
+The implementation follows both recorded constraints and settles neither
+question. Closing RE-9 does not close RE-9-Q1, RE-9-Q2, RE-5, PR-4, PI-1, PI-2,
+OB-4, AUDIT-6, RE-6, or any other issue.
+
+**Verification:** seven new tests were added; the four behavioural tests fail
+against the unfixed implementation, and the three checkpoint cases pin existing
+behaviour. The full offline suite passed with **1140 passed, 16 skipped**;
+`ruff check` passed.
 
 **Related, not blocking:** AUDIT-6 (escalation of technical failures), RE-6 (the
 agent-history reasoning clause 6 follows), RE-5 (wording, unchanged), PR-4, PI-1
