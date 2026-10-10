@@ -51,7 +51,7 @@ Alongside module 9, one concrete provider adapter is implemented: **Google Gemin
 
 ### Verification
 
-- **1140 passed, 16 skipped** in the offline suite, with the `gemini` extra installed — no credential or network required. The 16 skipped are the live Gemini tests below, which the offline suite excludes. Without the extra, the 102 offline Gemini adapter tests are skipped as well.
+- **1157 passed, 16 skipped** in the offline suite, with the `gemini` extra installed — no credential or network required. The 16 skipped are the live Gemini tests below, which the offline suite excludes. Without the extra, the 103 offline Gemini adapter tests and the example's credential test do not run: the suite reports 1053 passed, 3 skipped.
 - **16 / 16 live Gemini tests passing** against the real API. These are opt-in and are excluded from the offline suite.
 
 ## Repository structure
@@ -102,6 +102,9 @@ Orbitlance-AI-Agent-Framework/
 │   ├── runtime_engine/       module 14 + the activation composition root
 │   └── observability/        module 15
 │
+├── examples/
+│   └── minimal_agent/        the Quick Start's runnable agent and its project
+│
 ├── tests/
 └── assets/                   branding assets and diagrams
 ```
@@ -119,6 +122,8 @@ Orbitlance-AI-Agent-Framework/
 
 ## Getting started
 
+To run an agent, follow the [Quick Start](docs/quickstart.md): it walks through `examples/minimal_agent/`, a complete project answering through the Gemini adapter.
+
 ```bash
 pip install -e ".[dev,gemini]"  # framework + test tooling + the Gemini extra the full offline suite needs
 pytest -q                      # the offline suite; live Gemini tests stay skipped unless explicitly enabled
@@ -134,6 +139,7 @@ pip install -e ".[gemini]"  # only if using the Gemini adapter
 
 ## Documentation
 
+- [docs/quickstart.md](docs/quickstart.md) — install, configure and run a first agent
 - [docs/architecture.md](docs/architecture.md) — how the pieces relate to one another
 - [docs/project-configuration.md](docs/project-configuration.md) — the Core/Project override contract
 - [docs/runtime-specification.md](docs/runtime-specification.md) — the fifteen-module runtime blueprint
