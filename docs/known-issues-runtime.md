@@ -12,8 +12,8 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Fifteen open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
-RE-3, RE-5, AUDIT-6, WR-2, OB-4, PR-4, PI-1, PI-2**, recorded during
+**Fourteen open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
+RE-3, RE-5, AUDIT-6, WR-2, OB-4, PR-4, PI-1**, recorded during
 Modules 10, 11, 14 and 15, the §14 post-implementation audit, the Step 4 roadmap
 audit of 2026-09-05, the WR-1 implementation audit of the same day, the RE-5
 customer-facing wording audit of 2026-10-08, and the RE-9 provider-outcome audit
@@ -24,9 +24,10 @@ PR-4, PI-1 and PI-2. **RE-8**, registered with the
 2026-10-08**. **WR-3**, registered with the workflow-scope (ROOT-C) ruling of
 2026-10-08, **closed on 2026-10-08**. **RE-9**, registered by the RE-5 audit of
 2026-10-08, **closed on 2026-10-09**; its two open questions, **RE-9-Q1** and
-**RE-9-Q2**, remain unresolved. **PI-2**'s design was ruled on 2026-10-09
-(raised-only provider failures; not implemented); that ruling makes RE-9-Q2
-moot only for conforming adapters and narrows PR-4, both of which stay open.
+**RE-9-Q2**, remain unresolved. **PI-2**, registered by the RE-9 audit and ruled
+on 2026-10-09 (raised-only provider failures), **closed on 2026-10-15** once the
+conformance suite enforced the rule (`d52ed71`); its ruling makes RE-9-Q2 moot
+only for conforming adapters and narrows PR-4, both of which stay open.
 **WR-1 and GE-1 are not new defects** — both were disclosed in source and in
 README from their own module milestones, and both are pinned by tests; what they
 lacked until 2026-09-05 was a register identifier, an owner and a closure
@@ -93,7 +94,7 @@ one class.
 | **R3-4** | **`ResolvedContext` has no consumer yet** | **Additive Extension** |
 | **PA-3** | **`06_lead_qualification.md` is not assembled; its behaviour is delivered distributively** | **Documentation / Reporting** (was: Architecture Issue) |
 | **PI-1** | **The Gemini adapter cannot tell a vendor-side missing or filtered reply from a genuinely empty answer** | **Architecture Issue** |
-| **PI-2** | **No rule says when a provider failure is raised and when it is returned as `ProviderResponse.error_type`** | **Architecture Issue** — design ruled, not implemented |
+| **PI-2** | **No rule says when a provider failure is raised and when it is returned as `ProviderResponse.error_type`** | **Closed** — failures are raised; the conformance suite rejects a returned `error_type` |
 | **PR-1** | **§10.10 and §13.10 disagree about whether the secondary provider must be registered** | **Architecture Issue** |
 | **PR-2** | **The declared Model is required at routing time but not at validation** | **Documentation / Reporting** |
 | **PR-3** | **`ProviderRequest` deferred; sole ownership reserved to the Provider Registry** | **Additive Extension** |
@@ -3338,9 +3339,16 @@ implemented and none is proposed here.
 ### PI-2 — No rule says when a provider failure is raised and when it is returned as `ProviderResponse.error_type`
 
 **Class: Architecture Issue** · Registered 2026-10-08 (RE-9 audit).
-**Design ruled — not implemented** (2026-10-09). The ruling follows the original
-entry below; PI-2 is not closed by it. The original entry is retained unchanged.
-**Open.** A provider-contract clarification.
+✅ **CLOSED 2026-10-15** — design ruled 2026-10-09, implemented in `d52ed71`.
+
+> **Historical record.** The original description and the 2026-10-09 ruling that
+> follow are preserved with the status and wording recorded at the time.
+> Statements such as *"both permitted today"*, *"No fix is implemented"* and
+> *"PI-2 may close when…"* describe that historical state and the closure
+> condition, not the current state. The current resolution and its verification
+> are in **RESOLVED 2026-10-15 — PI-2 implemented as ruled**, after the ruling.
+
+*As registered:* **Open.** A provider-contract clarification.
 
 Two representations of a provider failure are both permitted today:
 
@@ -3359,7 +3367,8 @@ neither does this entry. No fix is implemented and none is proposed here.
 #### Ruling, 2026-10-09 — PI-2: provider failures are raised
 
 **Accepted architectural ruling (Option 1, raised-only). PI-2 is design ruled —
-not implemented. It is not closed.**
+not implemented. It is not closed.** *(Status as ruled on 2026-10-09. PI-2 closed
+on 2026-10-15 — see the resolution note below.)*
 
 1. **Raised only.** A conforming Provider adapter must report operational
    provider failures by raising the standard `ProviderError`. It must not return
@@ -3400,6 +3409,62 @@ the conformance suite is explicitly run, which the adapter author must do before
 registration; the Provider Registry does not run the suite itself (D-7). RE-9
 clause 1 remains the runtime safety net. **PI-2 may close when that task is
 implemented and verified.**
+
+#### ✅ **RESOLVED 2026-10-15 — PI-2 implemented as ruled**
+
+The future implementation task above was carried out in commit `d52ed71`, and
+nothing else was changed for PI-2.
+
+* **Conformance.** `check_generate_returns_normalised_response` in
+  `runtime/provider/conformance.py` now fails an adapter whose `generate` returns
+  a `ProviderResponse` with `error_type` set, naming PI-2 in the failure. A
+  successful response still passes, and so does an adapter that declines by
+  raising a normalised `ProviderError`.
+* **Test.** `test_suite_rejects_a_returned_failure_but_accepts_success_and_raising`
+  in `tests/provider/test_provider_foundation.py`: an adapter that is conforming
+  in every other respect but returns a failure fails conformance on exactly this
+  check, while a successful adapter and a raising adapter pass it.
+* **The Gemini adapter** already raised every failure and was not changed.
+  `test_the_real_adapter_passes_the_full_conformance_suite` runs the suite,
+  including the new check, against it offline.
+* **Unchanged:** clauses 1–6 of the ruling; `ProviderResponse` and its
+  `error_type` field; RE-9's ruling, implementation and safety net; the Provider
+  Registry, which still does not run the suite (D-7); and
+  `docs/runtime-specification.md`.
+
+**Verification.** On HEAD `e287964`, offline, on 2026-10-15: the full suite
+passed with **1157 passed, 16 skipped** (the 16 are the opt-in live Gemini
+tests); the PI-2 test, the Gemini offline conformance test and the RE-9 runtime
+tests passed; `ruff check` passed.
+
+**Limits — recorded, not closed over:**
+
+* The rule is checked only when the conformance suite is explicitly run. The
+  Provider Registry does not run it (D-7); RE-9 clause 1 remains the runtime
+  safety net.
+* The check inspects one healthy sample call. The oversized-payload path is
+  covered separately by `check_oversized_payload_fails_closed`. The suite does
+  **not** force authentication, rate-limit or timeout failures, so an adapter
+  that returned `error_type` only on those paths would not be detected.
+  Conformance is evidence for the paths it exercises, not proof that every
+  failure path of every adapter conforms.
+* The live conformance test, `test_live_conformance_suite_passes`, has not been
+  rerun since `d52ed71`.
+
+**§9.12(b) interpretation — recorded; the specification is unchanged.** §9.12(b)
+lists *"normalized error types returned for common failure classes (auth,
+rate-limit, timeout) regardless of underlying provider."* This register reads
+"returned" as **produced or exposed by the provider abstraction**: each failure
+class surfaces as a normalised `ProviderErrorType` whichever vendor caused it.
+It is **not** a requirement to return failures inside
+`ProviderResponse.error_type`. Under PI-2 an operational failure is reported by
+raising `ProviderError`, which carries the normalised type in its `error_type`.
+`docs/runtime-specification.md` is not changed.
+
+**Still open — not closed by PI-2:** RE-9-Q1; RE-9-Q2, which is moot only for
+conforming adapters (clause 4); PR-4, narrowed but undecided (clause 5); PI-1;
+and workflow transitions, turn atomicity and rollback on no-usable-answer turns
+(clause 6).
 
 ---
 

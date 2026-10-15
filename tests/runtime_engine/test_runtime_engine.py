@@ -118,8 +118,10 @@ class FixtureAdapter:
         )
         self._text = text
         self._fail_with = fail_with
-        #: RE-9: a failure *returned* as a value, which the conformance suite
-        #: accepts, rather than raised.
+        #: RE-9: a failure *returned* as a value rather than raised. The
+        #: conformance suite rejects this since PI-2; the fixture keeps it to
+        #: exercise RE-9's runtime safety net, and the registry does not run the
+        #: suite (D-7).
         self._error_type = error_type
         self._last: SerializedPrompt | None = None
         self.calls: list[PromptBundle] = []
