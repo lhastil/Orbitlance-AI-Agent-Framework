@@ -99,6 +99,7 @@ one class.
 | **PR-2** | **The declared Model is required at routing time but not at validation** | **Documentation / Reporting** |
 | **PR-3** | **`ProviderRequest` deferred; sole ownership reserved to the Provider Registry** | **Additive Extension** |
 | **PR-4** | **A returned error-marked or empty `ProviderResponse` never triggers §10.9 failover** | **Architecture Issue** |
+| **D-7** | **`ProviderRegistry.register()` does not run or verify provider conformance** | **Documentation / Reporting** — ruled 2026-10-15: conformance is the adapter author's obligation, with CI as the intended enforcement mechanism for in-repository adapters (no CI configured yet) |
 | **TE-1** | **`ToolRequest` exists as a type with no writer** | **Documentation / Reporting** |
 | **TE-2** | **§11.12(c)'s retry scenario is unenforceable; no retry implemented** | **Architecture Issue** |
 | **TE-3** | **§11.2's integrations path unexecutable; §11.9's Resolver cross-reference diverges** | **Architecture Issue** |
@@ -3465,6 +3466,114 @@ raising `ProviderError`, which carries the normalised type in its `error_type`.
 conforming adapters (clause 4); PR-4, narrowed but undecided (clause 5); PI-1;
 and workflow transitions, turn atomicity and rollback on no-usable-answer turns
 (clause 6).
+
+---
+
+### D-7 — `ProviderRegistry.register()` does not run or verify provider conformance
+
+**Class: Documentation / Reporting** · Registered and ruled 2026-10-15 (D-7
+audit, run against `d0fe1ce`). **Ruled — documentation only; no implementation
+change.** `D-7` is the label the Provider Registry's source and tests already use
+(`test_d7_*` in `tests/provider_registry/test_provider_registry.py`); it is
+registered under that label so the decision has a register entry — a
+documented exception to the *Identifiers* note above, under which source labels
+are not register identifiers. D-7 is
+separate from **PI-2**, which concerns how provider failures are represented and
+raised.
+
+**What the specification says.**
+
+* **§9.10** requires every concrete implementation to pass a shared conformance
+  test suite, including a check that `getCapabilities()` reports truthfully.
+* **§9.12(a)** is where "before registration" appears: *"the conformance suite
+  any new adapter must pass before registration"*. §9.10 does not contain that
+  phrase.
+* **§10.10** requires that a project never route to an unregistered provider,
+  caught as a configuration error at Validation Layer time. It concerns whether
+  a provider is registered, not whether it conforms, and is not evidence that the
+  Registry runs or verifies conformance.
+* §10 defines no registration member — §10.6 lists `getProvider` and
+  `generateWithFallback` — so `register()` is framework-introduced.
+
+**Current implementation (verified).** `register()` requires the object to
+expose `model_binding()` and rejects a duplicate provider id. It does not run the
+conformance suite, does not check that it was run, and does not certify the
+adapter; no production code calls `run_conformance` or `assert_conforms`. Pinned
+by `test_d7_conformance_is_documented_but_not_executed_by_register`.
+
+#### Ruling, 2026-10-15 — D-7: conformance is the adapter author's obligation
+
+**Accepted architectural ruling.**
+
+1. **A contractual adapter-quality requirement.** Passing the shared conformance
+   suite is part of what makes a provider adapter conforming.
+2. **The adapter author is responsible** for ensuring the adapter passes the
+   suite before it is registered. This is the reading of §9.12(a) the register
+   adopts; the caller of `register()` is not required to rerun the suite for each
+   object it registers.
+3. **CI is the intended enforcement mechanism** for adapters maintained in this
+   repository. No CI configuration exists in the repository yet; see
+   *Enforcement as found* below.
+4. **`register()` does not execute conformance, verify that it was run, or
+   certify an adapter.**
+5. **No conformance checks are added to `register()` under D-7**, including the
+   five offline checks that do not call `generate()`
+   (`check_implements_interface`, `check_capabilities_are_valid`,
+   `check_capabilities_are_stable`, `check_capability_flags_are_boolean`,
+   `check_tokenizer_and_capabilities_agree`). The audit found them largely
+   redundant with construction-time validation in `ProviderCapabilities` and
+   `ModelBinding`, or testing values production does not read
+   (`get_capabilities()` and the capability flags; the Runtime Engine budgets
+   from `model_binding().capabilities`). The two restrictions they would add — a
+   serialization reserve below the context window, and refusing a tokenizer that
+   declares no identity — conflict with design decisions recorded in
+   `runtime/models/provider.py` and `runtime/provider/binding.py`, and would each
+   need separate approval.
+6. **Conformance is never run automatically during registration.** The suite
+   calls `generate()` five times; against a real provider that means real
+   token-counting and generation requests — an unwanted side effect of wiring a
+   process together.
+7. **A passing result is evidence, not a permanent guarantee.** It covers the
+   implementation and the conditions tested: fakes or stubs for an offline run;
+   one instance, credential and point in time for the live tier. It does not
+   guarantee the future behaviour of a mutable provider instance or certify every
+   runtime configuration.
+8. **Externally maintained adapters.** The adapter author's obligation in
+   clause 2 applies to them as well, but this repository's CI does not enforce
+   it for them, and no additional runtime policy is decided here.
+
+**Enforcement as found, 2026-10-15.** One offline test holds an in-repository
+adapter to the suite: `test_the_real_adapter_passes_the_full_conformance_suite`
+(`tests/provider/adapters/test_gemini_offline.py`) runs all ten checks against
+the Gemini adapter implementation over a stub client — not the real provider —
+and is skipped unless the `gemini` extra is installed.
+`test_20_the_fake_adapter_passes_the_real_conformance_suite`
+(`tests/runtime_engine/test_runtime_engine.py`) keeps the runtime tests' default
+`FixtureAdapter`, a test double, conforming. The live tier,
+`test_live_conformance_suite_passes`, is opt-in.
+**The repository contains no CI configuration.** Until one is added, clause 3's
+enforcement holds wherever the offline suite is run, not automatically.
+
+**Test doubles are not adapters.** Some objects registered in tests deliberately
+do not conform — `FixtureAdapter(error_type=...)` and
+`FixtureAdapter(fail_with=...)` exercise RE-9's safety net and §14.9 containment.
+`OfflineGemini` (`tests/test_minimal_agent_example.py`) and `FakeAdapter`
+(`tests/provider_registry/test_provider_registry.py`) fail the checks that call
+`generate()`, with no recorded reason. The ruling governs adapters; whether
+those two doubles should conform is not decided here.
+
+**Citations still to correct — runtime docstrings, outside this
+documentation-only change.** `runtime/provider_registry/registry.py` attributes
+"before registration" to §9.10 (module docstring, lines 25–26 and 64;
+`register()`, lines 129–130), says §9.10 and §10.10 "imply" the registration
+order (lines 61–62), and asks "the caller" to run the suite "against this
+adapter" (lines 127–129), where this ruling assigns it to the adapter author.
+`runtime/provider/conformance.py` line 3 makes the same §9.10 attribution.
+`test_d7_conformance_is_documented_but_not_executed_by_register` requires only
+that "9.10" appear in `registry.py`, so a corrected citation naming both §9.10
+and §9.12(a) would still satisfy it.
+
+**Unchanged:** runtime code, tests, `docs/runtime-specification.md`, and PI-2.
 
 ---
 
