@@ -12,7 +12,7 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Fourteen open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
+**Thirteen open Architecture Issues: TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
 RE-3, RE-5, AUDIT-6, WR-2, OB-4, PR-4, PI-1**, recorded during
 Modules 10, 11, 14 and 15, the §14 post-implementation audit, the Step 4 roadmap
 audit of 2026-09-05, the WR-1 implementation audit of the same day, the RE-5
@@ -32,6 +32,8 @@ only for conforming adapters and narrows PR-4, both of which stay open.
 usable answer) were registered and ruled on 2026-10-30, and **closed on
 2026-10-30** once implemented and verified. RE-10 decides the
 workflow-transition question PI-2's ruling left open in its clause 6.
+**PR-1** (secondary provider registration) was ruled on 2026-10-30 and **closed
+on 2026-10-30** once implemented in `9a24aa5`; PR-2 stays open.
 **WR-1 and GE-1 are not new defects** — both were disclosed in source and in
 README from their own module milestones, and both are pinned by tests; what they
 lacked until 2026-09-05 was a register identifier, an owner and a closure
@@ -99,7 +101,7 @@ one class.
 | **PA-3** | **`06_lead_qualification.md` is not assembled; its behaviour is delivered distributively** | **Documentation / Reporting** (was: Architecture Issue) |
 | **PI-1** | **The Gemini adapter cannot tell a vendor-side missing or filtered reply from a genuinely empty answer** | **Architecture Issue** |
 | **PI-2** | **No rule says when a provider failure is raised and when it is returned as `ProviderResponse.error_type`** | **Closed** — failures are raised; the conformance suite rejects a returned `error_type` |
-| **PR-1** | **§10.10 and §13.10 disagree about whether the secondary provider must be registered** | **Architecture Issue** |
+| **PR-1** | **§10.10 and §13.10 disagree about whether the secondary provider must be registered** | **Closed** — a declared Secondary is checked for registration at validation time (`CONF005`) |
 | **PR-2** | **The declared Model is required at routing time but not at validation** | **Documentation / Reporting** |
 | **PR-3** | **`ProviderRequest` deferred; sole ownership reserved to the Provider Registry** | **Additive Extension** |
 | **PR-4** | **A returned error-marked or empty `ProviderResponse` never triggers §10.9 failover** | **Architecture Issue** |
@@ -877,9 +879,9 @@ consumers, and the concern the entry was holding open no longer exists.
 ### PR-1 — §10.10 and §13.10 disagree about which providers must be registered
 
 **Class: Architecture Issue** · Recorded under system-owner ruling D-9(d);
-Module 13 deliberately **not** modified. **Ruled 2026-10-30 and implemented;
-not yet closed** — see the ruling and implementation note at the end of this
-entry. The description that follows is the state as recorded, retained for
+Module 13 deliberately **not** modified. ✅ **CLOSED 2026-10-30** — ruled and
+implemented in `9a24aa5`; see the resolution note at the end of this entry. The
+description, ruling and implementation note that follow are retained for
 history.
 
 Two frozen clauses do not describe the same scope:
@@ -972,7 +974,19 @@ On `feature/runtime-packaging` on top of `ecdb1b1`; not yet committed.
 * **Verification.** Offline, 2026-10-30: full suite **1197 passed, 16 skipped**
   (the 16 are the opt-in live Gemini tests); `ruff check` passed.
 
-**PR-1 may close** once this change is reviewed and committed.
+*As recorded before closure:* **PR-1 may close** once this change is reviewed
+and committed. *(Historical closure condition, met on 2026-10-30 — see below.)*
+
+#### ✅ **RESOLVED 2026-10-30 — PR-1 implemented as ruled**
+
+The reviewed PR-1 implementation — code, tests and the ruling and
+implementation note above — is commit `9a24aa5` on `feature/runtime-packaging`.
+This resolution note, with the status line, table row and header changes that
+accompany it, records the formal closure only; it is a later register update
+and is not part of `9a24aa5`. No further change was made for PR-1.
+
+**Unchanged and still open:** PR-2 (the declared Model at validation time) and
+PR-4. The Secondary's model binding remains outside PR-1's scope.
 
 ---
 
