@@ -12,8 +12,8 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Fourteen open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
-RE-3, RE-5, AUDIT-6, WR-2, OB-4, PR-4, PI-1**, recorded during
+**Sixteen open Architecture Issues: PR-1, TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
+RE-3, RE-5, AUDIT-6, WR-2, OB-4, PR-4, PI-1, WR-4, RE-10**, recorded during
 Modules 10, 11, 14 and 15, the §14 post-implementation audit, the Step 4 roadmap
 audit of 2026-09-05, the WR-1 implementation audit of the same day, the RE-5
 customer-facing wording audit of 2026-10-08, and the RE-9 provider-outcome audit
@@ -28,6 +28,10 @@ PR-4, PI-1 and PI-2. **RE-8**, registered with the
 on 2026-10-09 (raised-only provider failures), **closed on 2026-10-15** once the
 conformance suite enforced the rule (`d52ed71`); its ruling makes RE-9-Q2 moot
 only for conforming adapters and narrows PR-4, both of which stay open.
+**WR-4** (the initial workflow) and **RE-10** (workflow processing without a
+usable answer) were registered and ruled on 2026-10-30; neither is implemented.
+RE-10 decides the workflow-transition question PI-2's ruling left open in its
+clause 6.
 **WR-1 and GE-1 are not new defects** — both were disclosed in source and in
 README from their own module milestones, and both are pinned by tests; what they
 lacked until 2026-09-05 was a register identifier, an owner and a closure
@@ -116,6 +120,7 @@ one class.
 | **RE-7** | **§14 publishes no camelCase alias; the convention is unsettled** | **Documentation / Reporting** |
 | **RE-8** | **A positive escalation verdict can be lost before the final `RuntimeResponse`** | **Closed** — final escalation normalization in `handle_request` |
 | **RE-9** | **An empty or error-classified `ProviderResponse` is delivered as a normal completed turn; no module classifies that provider outcome** | **Closed** — returned failures and exact-empty answers become degraded turns |
+| **RE-10** | **Workflow processing runs on a turn whose returned provider response has no usable answer** | **Architecture Issue** — design ruled, not implemented |
 | **AUDIT-1** | **Budget and provider are never proven to describe the same model** | **Closed** — resolved globally |
 | **AUDIT-2** | **Cross-project session/workflow contamination via shared stores** | **AMENDED** — resolved for the production activation path; **open outside it** (constructor escape hatch remains) |
 | **AUDIT-3** | **`transition_history` grows with no-op entries** | **Runtime Improvement** |
@@ -130,6 +135,7 @@ one class.
 | **WR-1** | **§6.2's message-driven routing is not implemented; no conversation advances past its first workflow** | **Closed** — two transitions on Core-published vocabulary |
 | **WR-2** | **Consultation completion has no runtime contract; "submit" is prose only** | **Architecture Issue** |
 | **WR-3** | **Nothing enforces a project's workflow scope; a conversation can be committed to a workflow the project has not enabled** | **Closed** — activation checks plus a commit-time scope gate |
+| **WR-4** | **A new conversation starts with no active workflow, contrary to the data-model contract's Discovery default** | **Architecture Issue** — design ruled, not implemented |
 | **GE-1** | **§8.2's pre-flight content scan is not implemented; no inbound message is checked** | **Closed** — two conditions enforced from Core vocabulary |
 | **PA-4** | **§4 cites an assembly order in a section that does not exist** | **Documentation / Reporting** |
 | **PA-5** | **Playbook provenance check inspected only the first source** | **Closed** |
@@ -1638,6 +1644,15 @@ them in the engine would mean §14 deciding what counts as a real transition —
 log (keep every commit) or a state history (keep changes only) is a question §7
 does not answer, and it belongs with Modules 6 and 7.
 
+**Note, 2026-10-30 — still open; not resolved by RE-10 or WR-4.**
+**RE-10**'s ruling skips all workflow processing on a turn whose returned
+provider response has no usable answer, so no stay-put entry is written on such a
+turn. That is a consequence of skipping the workflow step, not a decision about
+which history entries to keep: the audit-log-versus-state-history question above
+remains open. Once **WR-4** is implemented, the first entry of the example
+above, `'None->discovery'`, will no longer be recorded, because Discovery becomes
+the initial state rather than a transition.
+
 ---
 
 ### AUDIT-4 — No production composition/activation root
@@ -2532,6 +2547,15 @@ workflow routes only on what *it* publishes), and the extraction-rules scan
 (narrowed to pattern/scoring/threshold machinery, with the stronger
 no-vocabulary-in-Python guarantee asserted separately).
 
+**Note, 2026-10-30 — first-turn behaviour superseded by WR-4 (ruled, not yet
+implemented).** R-1 above routes a new conversation into Discovery after its
+first answer, and routing phrases are not consulted on the first message. Under
+**WR-4**'s ruling a conversation is created with Discovery already active,
+the first prompt uses Discovery, and the first customer message may advance the
+conversation by routing phrase. Until WR-4 is implemented, the text above
+describes the running code. WR-1's ruling and its two transitions are otherwise
+unchanged.
+
 ---
 
 ### WR-2 — Consultation completion has no runtime contract; "submit the consultation request" is prose only
@@ -3394,6 +3418,11 @@ on 2026-10-15 — see the resolution note below.)*
    `WorkflowStage`, which may commit a transition; a raised failure does not.
    This ruling does not decide empty-success behaviour, turn atomicity or
    workflow rollback.
+   *(Resolved 2026-10-30 by ruling **RE-10**: no workflow processing —
+   no routing, no commit, no history entry — on a turn whose returned response
+   has no usable answer. Decision recorded; implementation pending. RE-10 does
+   not decide turn atomicity or rollback beyond the workflow step. Clauses 1–5
+   are unchanged.)*
 
 **Unchanged:** the Provider Interface signature, `ProviderResponse`, the Provider
 Registry and its failover set, the Gemini adapter (which already raises every
@@ -3465,7 +3494,9 @@ raising `ProviderError`, which carries the normalised type in its `error_type`.
 **Still open — not closed by PI-2:** RE-9-Q1; RE-9-Q2, which is moot only for
 conforming adapters (clause 4); PR-4, narrowed but undecided (clause 5); PI-1;
 and workflow transitions, turn atomicity and rollback on no-usable-answer turns
-(clause 6).
+(clause 6). *(Update, 2026-10-30: clause 6's workflow-transition question is
+decided by **RE-10**, not yet implemented; turn atomicity and rollback
+beyond the workflow step remain undecided.)*
 
 ---
 
@@ -3574,6 +3605,171 @@ that "9.10" appear in `registry.py`, so a corrected citation naming both §9.10
 and §9.12(a) would still satisfy it.
 
 **Unchanged:** runtime code, tests, `docs/runtime-specification.md`, and PI-2.
+
+---
+
+## Registered with the initial-workflow and no-usable-answer rulings, 2026-10-30
+
+Two independent rulings, approved by the system owner after evidence and
+compatibility reviews run against `f3f2a05`. The reviews called them **I1** and
+**D1**. They are registered as **WR-4** and **RE-10**, following this register's
+module-prefix convention; `D1` is not used as an identifier because it would be
+confused with the system-owner rulings D-1(a) and D-1(b). Neither ruling is
+implemented, and neither needs the other to be implemented first. They meet only
+on a conversation's first turn, as described under RE-10.
+
+---
+
+### WR-4 — A new conversation starts with no active workflow, contrary to the data-model contract's Discovery default
+
+**Class: Architecture Issue** · Registered and ruled 2026-10-30. **Design ruled —
+not implemented. Not closed.**
+
+The frozen data-model row says `WorkflowState` is *"Created by Workflow State
+Manager on first message (defaults to Discovery)"*
+(`docs/runtime-specification.md:326`). The implementation does not follow it:
+
+* `WorkflowStateManager` creates a new state with `active_workflow=None`
+  (`runtime/workflow_state/manager.py:181-188`, under the module note "D-4" at
+  lines 34-43);
+* the first prompt is therefore assembled with **no workflow section**
+  (`runtime/assembler/prompt_assembler.py:336-341`);
+* Discovery becomes active only when the Router's first-turn rule commits
+  `None -> discovery` after the first answer (`runtime/workflow_router/router.py:149-167`),
+  recorded in `transition_history` as `"None->discovery"` (module note "D-3",
+  `manager.py:29-32`). Routing phrases are not consulted on the first message.
+
+The deviation was recorded only in source, never in this register. Both reasons
+the source gives are now covered:
+
+* "the manager cannot check whether the project enabled Discovery" — WR-3's
+  activation rule (`config.first_turn_workflow_enabled`) refuses any project
+  without Discovery, and the engine accepts only a passed project validation;
+* "the Prompt Assembler checks only that a workflow exists in Core" — no longer
+  true: it raises `WorkflowNotEnabledError` for a workflow the project has not
+  enabled (`prompt_assembler.py:350-358`).
+
+#### Ruling, 2026-10-30 — WR-4: Discovery is the initial workflow
+
+**Accepted architectural ruling. It restores the frozen data-model contract; no
+freeze amendment or version bump is required.**
+
+1. Every newly created conversation starts with `active_workflow = "discovery"`.
+2. Discovery is active before the first prompt is assembled and sent to the
+   provider.
+3. The Workflow State Manager remains responsible for creating the initial
+   workflow state.
+4. The manager does not import the Workflow Router and acquires no
+   project-specific configuration responsibility.
+5. The initial workflow value is supplied through an existing construction or
+   activation boundary — preferably passed into the manager, not reached through
+   a new cross-module dependency.
+6. **First-message phrase routing is allowed.** The first prompt is assembled
+   using Discovery, the provider generates the first response, and the existing
+   deterministic routing rules may then advance the workflow on the first
+   customer message. **This is an intentional behaviour change:** today the first
+   message never advances.
+7. The initial Discovery state is not a workflow transition.
+8. `None -> discovery` is not recorded in `transition_history`.
+9. The manager's history semantics are updated accordingly.
+
+**Unchanged:** `docs/runtime-specification.md`; the release-freeze document; the
+Router's responsibilities and §6.6 signature; the Prompt Assembler and its
+enablement check; WR-3 and its activation requirement, which this ruling relies
+on; `WorkflowTransitionDecision`; §14.2's stage order; RE-10.
+
+**Related:** **WR-1** (its first-turn rule R-1 is superseded for the engine
+path; see the note added to WR-1); **WR-3**; **AUDIT-3** (its example
+history changes; AUDIT-3 stays open).
+
+**Implementation follow-ups — not authorized by this record:**
+
+* supply the initial workflow where the manager is constructed for activation
+  (`runtime/runtime_engine/activation.py:180`), keeping a default so direct
+  constructions elsewhere still work;
+* update the source notes that describe the old behaviour: `manager.py` "D-3" and
+  "D-4" (lines 29-43), `get_state` and `_load_or_create` (lines 90-102, 181-188),
+  the `WorkflowStateStage` docstring (`runtime/runtime_engine/stages.py:155-173`),
+  and the Router's first-turn comment (`router.py:162-163`). They are left as they
+  are until then, because they accurately describe the running code;
+* revise the tests that encode the `None` start or the `"None->discovery"` entry —
+  about 16 places in `tests/workflow_state/test_workflow_state_manager.py`,
+  `tests/runtime_engine/test_runtime_engine.py` and
+  `tests/workflow_router/test_workflow_router.py` (counted by search).
+
+**WR-4 may close** when the ruling is implemented, those tests are revised, and
+the full offline suite passes.
+
+---
+
+### RE-10 — Workflow processing runs on a turn whose returned provider response has no usable answer
+
+**Class: Architecture Issue** · Registered and ruled 2026-10-30. Decides the
+workflow-transition question left open by **PI-2**'s ruling, clause 6.
+**Design ruled — not implemented. Not closed.**
+
+`WorkflowStage` (`runtime/runtime_engine/stages.py:310-350`) runs before
+`DeliveryStage` classifies the turn (`stages.py:421-429`). So when the provider
+**returns** a response that `_no_usable_answer(...)` (`stages.py:114-122`)
+classifies as unusable — `error_type` set, or `text == ""` — the post-response
+guardrail runs, and, unless it blocks, the Router is consulted and a decision is
+committed: a real transition, a stay-put entry, or on a first turn the
+`None -> discovery` assignment. A **raised** provider failure never reaches this
+stage: the engine contains it and stops the pipeline at the provider stage
+(`runtime/runtime_engine/engine.py:302-313`). A blocked turn also stops before it.
+No specification clause and no earlier ruling addresses this case.
+
+#### Ruling, 2026-10-30 — RE-10: no workflow processing without a usable answer
+
+**Accepted architectural ruling. No freeze amendment or version bump is
+required.**
+
+When the provider returns a response that the existing `_no_usable_answer(...)`
+predicate classifies as unusable, `WorkflowStage.run` skips workflow processing
+entirely:
+
+1. routing is not invoked;
+2. no workflow transition is committed;
+3. no stay-put history entry is created;
+4. the existing workflow state and transition history are preserved for that
+   turn.
+
+This applies to returned responses with `error_type` set and to returned
+responses with `text == ""`. **`_no_usable_answer(...)` is not expanded or
+redefined** by this ruling; whitespace-only text remains RE-9-Q1.
+
+* **Raised provider exceptions:** unchanged. They already stop the pipeline
+  before the workflow stage; no duplicate handling and no new exception path is
+  introduced.
+* **Post-response guardrail:** unchanged. It continues to run on returned
+  responses under the existing pipeline contract; RE-9-Q2 is not affected.
+* **RE-9:** its classification of such turns (degraded, no agent turn, no
+  `failed_stage`) is unchanged.
+* **WR-3:** its commit-time scope check is unchanged and applies whenever
+  workflow processing proceeds.
+* **AUDIT-3:** **not resolved or amended.** Skipping the stay-put entry on such a
+  turn is a consequence of skipping the workflow step, not a decision about which
+  history entries to keep.
+* **Interaction with WR-4:** initial state creation happens in the
+  workflow-state stage, before the provider call, and is not affected. Once WR-4
+  is implemented, a first turn without a usable answer leaves Discovery active
+  with an empty history.
+
+**Placement:** inside `WorkflowStage.run`, before `route()`. **Unchanged:**
+pipeline stage order, module boundaries, public interfaces, `TurnState`, the
+provider contract, the Workflow Router's responsibilities, and
+`docs/runtime-specification.md`.
+
+**Related:** **PI-2** clause 6 (annotated as resolved by this ruling);
+**RE-9**; **WR-1**; **WR-3**; **AUDIT-3**, which stays open.
+
+**Implementation follow-ups — not authorized by this record:** the change in
+`WorkflowStage.run` and its docstring; a test asserting that the workflow state
+and history are unchanged after a turn whose returned response has no usable
+answer. No existing test asserts a commit on such a turn.
+
+**RE-10 may close** when the ruling is implemented, that test exists, and the
+full offline suite passes.
 
 ---
 
