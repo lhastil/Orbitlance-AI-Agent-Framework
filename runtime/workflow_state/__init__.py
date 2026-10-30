@@ -7,14 +7,15 @@ and decides nothing about workflows.
     from runtime.workflow_state import WorkflowStateManager
     from runtime.models import WorkflowTransitionDecision
 
-    workflows = WorkflowStateManager()
-    workflows.get_state("conv-1")                    # active_workflow is None
+    workflows = WorkflowStateManager(initial_workflow="discovery")
+    workflows.get_state("conv-1")        # active_workflow == "discovery", no history
     workflows.commit_transition(
-        "conv-1", WorkflowTransitionDecision("discovery")
-    )
+        "conv-1", WorkflowTransitionDecision("recommendation")
+    )                                    # history: ("discovery->recommendation",)
 
-See `manager` for the four ratified decisions and why a new conversation starts
-with no active workflow.
+Without `initial_workflow`, a new conversation starts with no active workflow.
+`activate()` supplies the Workflow Router's `FIRST_TURN_WORKFLOW` (WR-4). See
+`manager` for the four ratified decisions.
 """
 
 from runtime.models.workflow import WorkflowTransitionDecision

@@ -155,10 +155,12 @@ class SessionStage:
 class WorkflowStateStage:
     """Loads the conversation's workflow state (§7.6).
 
-    Part of §14.2's "resolve project + session" step. `get_state` creates an
-    empty state on first access — the data-model row's "created on first
-    message" — and that empty state chooses nothing: `active_workflow` stays
-    `None` until the Router commits a transition.
+    Part of §14.2's "resolve project + session" step. `get_state` creates a
+    state on first access — the data-model row's "created on first message" —
+    in the manager's initial workflow, with no transition history. `activate()`
+    sets that to the first-turn workflow, so the first prompt is assembled with
+    Discovery active (WR-4); a manager built without one leaves
+    `active_workflow` as `None` until the Router commits a transition.
     """
 
     __slots__ = ("_states", "name")
@@ -320,6 +322,14 @@ class WorkflowStage:
     no escalation. The Router stays unaware of scope, the Manager still judges
     nothing, and the Prompt Assembler's `WorkflowNotEnabledError` remains the
     downstream backstop.
+
+    **RE-10: no workflow processing without a usable answer.** When the
+    returned provider response is one `_no_usable_answer` classifies as
+    unusable, the Router is not consulted and nothing is committed — no
+    transition and no stay-put entry — so the state loaded for this turn,
+    history included, stands. The predicate is reused unchanged (RE-9-Q1 stays
+    open), and AUDIT-3's question of which history entries to keep is not
+    decided here.
     """
 
     __slots__ = ("_router", "_states", "_core", "_enabled_workflows", "name")
@@ -339,6 +349,9 @@ class WorkflowStage:
 
     def run(self, state: TurnState) -> None:
         assert state.workflow_state is not None
+        assert state.provider_response is not None
+        if _no_usable_answer(state.provider_response):
+            return  # RE-10: skipped; the state loaded for this turn stands.
         decision = self._router.route(
             state.workflow_state, state.request.message, self._core
         )

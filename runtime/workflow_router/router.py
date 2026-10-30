@@ -40,6 +40,10 @@ guess: `core/workflows/discovery.md`'s own Trigger names *"A new conversation
 begins"* as a condition to start it, and `recommendation.md` says to start
 *"only after the Discovery Workflow has collected sufficient information"*.
 Discovery is where the framework's own documents say a conversation begins.
+Under WR-4, `activate()` builds the Workflow State Manager with this workflow
+as its initial one, so an activated conversation already starts in Discovery
+and R-2 applies from its first message. R-1 is reached only for state created
+without an initial workflow.
 
 **R-2 — a Core-published phrase advances the conversation (WR-1, ruled
 2026-09-05).** A workflow may publish a "Routing Phrases" section naming, per
@@ -158,8 +162,10 @@ class WorkflowRouter:
         )
         self._assert_defined(target, core_bundle, reason)
 
-        # Only an established workflow routes onward. A first turn has just been
-        # placed in the first-turn workflow and has nothing to advance from yet.
+        # Only an established workflow routes onward. State created without an
+        # initial workflow has just been placed in the first-turn workflow and
+        # has nothing to advance from yet; under WR-4 an activated conversation
+        # starts in Discovery, so its first message reaches this branch.
         if current_state.active_workflow is not None:
             proposed = self._published_target(target, latest_message, core_bundle)
             if proposed is not None:

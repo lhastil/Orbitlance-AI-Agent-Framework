@@ -26,20 +26,22 @@ position to carry data forward. The only change made is representational — a
 `Mapping` becomes the frozen model's tuple of pairs, preserving every key,
 value and their order.
 
-**D-3 — `transition_history` entries are `"previous->target"`**, with
-`"None->target"` for the first transition out of no active workflow. Plain
+**D-3 — `transition_history` entries are `"previous->target"`.** Plain
 strings, matching the frozen `tuple[str, ...]`; no timestamps, no richer
-structure.
+structure. Creating a conversation's initial state is not a transition and
+records nothing (WR-4). `"None->target"` appears only for a manager built
+without an initial workflow, whose first commit leaves no active workflow.
 
-**D-4 — a new conversation starts with `active_workflow=None`.** The
-`WorkflowState` data-model row says creation "defaults to Discovery", and that
-default is deliberately not implemented. This module cannot make it safe: its
-inputs are a conversation id and a decision (§7.4), so it never sees
-`ResolvedContext` and cannot check whether the project actually enabled
-Discovery. The Prompt Assembler checks only that an active workflow exists in
-`CoreBundle`, not that the project enabled it — so a blind Discovery default
-would render a workflow a project had switched off. Choosing the first workflow
-is the Router's job (§6), and this module waits for it.
+**D-4 — a new conversation starts in the initial workflow it is given (WR-4,
+superseding the earlier `None` start).** The `WorkflowState` data-model row says
+creation "defaults to Discovery". This module still chooses nothing: the value
+is supplied at construction (`initial_workflow`), and `activate()` supplies the
+Workflow Router's `FIRST_TURN_WORKFLOW`. Project scope is not checked here —
+this module never sees `ResolvedContext` — and does not need to be: WR-3's
+activation rule refuses any project that has not enabled the first-turn
+workflow, and the Prompt Assembler refuses to render a workflow the project has
+not enabled. A manager built without an initial workflow keeps the standalone
+default: `active_workflow` is None until the Router commits a transition.
 """
 
 from __future__ import annotations
@@ -61,6 +63,7 @@ from runtime.workflow_state.store import (
 TRANSITION_ARROW = "->"
 
 #: What a first transition records as its origin, when nothing was active (D-3).
+#: Reached only by a manager built without an initial workflow.
 NO_PREVIOUS_WORKFLOW = "None"
 
 
@@ -75,10 +78,19 @@ class WorkflowStateManager:
     single global lock would buy nothing extra at the cost of throughput.
     """
 
-    __slots__ = ("_lock_registry", "_locks", "_store")
+    __slots__ = ("_initial_workflow", "_lock_registry", "_locks", "_store")
 
-    def __init__(self, store: WorkflowStateStore | None = None) -> None:
+    def __init__(
+        self,
+        store: WorkflowStateStore | None = None,
+        *,
+        initial_workflow: str | None = None,
+    ) -> None:
         self._store = store if store is not None else InMemoryWorkflowStateStore()
+        # D-4: the workflow a new conversation starts in, supplied by the caller
+        # (`activate()` passes the Router's FIRST_TURN_WORKFLOW). None keeps the
+        # standalone default of no active workflow.
+        self._initial_workflow = initial_workflow
         self._locks: dict[str, threading.Lock] = {}
         # Guards creation of the per-conversation locks themselves. Without it,
         # two threads first-touching the same conversation could each build a
@@ -88,11 +100,13 @@ class WorkflowStateManager:
 
     # -- §7.6 public interface ----------------------------------------------
     def get_state(self, conversation_id: str) -> WorkflowState:
-        """The current state, creating an empty one on first access.
+        """The current state, creating a new one on first access.
 
-        Creation here is the data-model row's "created on first message", and it
-        is safe precisely because the new state chooses nothing: `active_workflow`
-        is None until the Router commits a transition (D-4).
+        Creation here is the data-model row's "created on first message". The new
+        state starts in the initial workflow supplied at construction, with an
+        empty `transition_history` — starting is not a transition (D-3, D-4). It
+        is not stored until the first commit. Without an initial workflow,
+        `active_workflow` is None until the Router commits a transition.
 
         A store failure raises rather than returning that empty state — the two
         are indistinguishable to a caller, and §7.9 calls the silent reset
@@ -144,7 +158,7 @@ class WorkflowStateManager:
     # -- internals -----------------------------------------------------------
     @staticmethod
     def _transition_entry(previous: str | None, target: str) -> str:
-        """D-3: `"previous->target"`, or `"None->target"` for the first one."""
+        """D-3: `"previous->target"`, or `"None->target"` when nothing was active."""
         origin = previous if previous is not None else NO_PREVIOUS_WORKFLOW
         return f"{origin}{TRANSITION_ARROW}{target}"
 
@@ -183,9 +197,13 @@ class WorkflowStateManager:
         stored = self._read(conversation_id)
         if stored is not None:
             return stored
-        # D-4: no workflow is chosen here. An empty state is a conversation the
-        # Router has not routed yet, which is exactly what it is.
-        return WorkflowState(conversation_id=conversation_id)
+        # D-4: no workflow is chosen here — the initial workflow was supplied at
+        # construction. Starting in it is not a transition, so the history stays
+        # empty (D-3, WR-4).
+        return WorkflowState(
+            conversation_id=conversation_id,
+            active_workflow=self._initial_workflow,
+        )
 
     def _read(self, conversation_id: str) -> WorkflowState | None:
         try:

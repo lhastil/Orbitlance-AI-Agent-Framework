@@ -110,7 +110,7 @@ from runtime.runtime_engine.errors import AuditStoreNotConfiguredError
 from runtime.session import SessionManager
 from runtime.tool_executor import ToolExecutor
 from runtime.validation import Validator
-from runtime.workflow_router import WorkflowRouter
+from runtime.workflow_router import FIRST_TURN_WORKFLOW, WorkflowRouter
 from runtime.workflow_state import WorkflowStateManager
 
 
@@ -177,7 +177,10 @@ def activate(
         guardrails=GuardrailEngine(core),
         providers=providers,
         router=WorkflowRouter(),
-        states=WorkflowStateManager(),
+        # WR-4: a new conversation starts in the first-turn workflow, so the
+        # first prompt is assembled with it active. WR-3's activation rule has
+        # already refused any project that does not enable it.
+        states=WorkflowStateManager(initial_workflow=FIRST_TURN_WORKFLOW),
         tools=ToolExecutor(),
         audit=AuditLogger(SqliteAuditLogStore(audit_database)),
     )

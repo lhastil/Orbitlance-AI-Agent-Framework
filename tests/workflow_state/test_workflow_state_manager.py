@@ -448,6 +448,55 @@ def test_d4_only_a_committed_decision_sets_a_workflow(
 
 
 # =============================================================================
+# WR-4 — an initial workflow supplied at construction
+# =============================================================================
+def test_wr4_a_new_conversation_starts_in_the_supplied_initial_workflow() -> None:
+    workflows = WorkflowStateManager(initial_workflow="discovery")
+    state = workflows.get_state("fresh")
+    assert state.conversation_id == "fresh"
+    assert state.active_workflow == "discovery"
+    assert state.collected_data == ()
+    assert state.transition_history == ()  # starting is not a transition (D-3)
+
+
+def test_wr4_the_first_commit_records_the_initial_workflow_as_its_origin() -> None:
+    workflows = WorkflowStateManager(initial_workflow="discovery")
+    committed = workflows.commit_transition("c", decision("recommendation"))
+    assert committed.active_workflow == "recommendation"
+    assert committed.transition_history == ("discovery->recommendation",)
+    assert not any(
+        entry.startswith(f"{NO_PREVIOUS_WORKFLOW}{TRANSITION_ARROW}")
+        for entry in committed.transition_history
+    )
+
+
+def test_wr4_without_an_initial_workflow_the_default_stays_none() -> None:
+    for workflows in (
+        WorkflowStateManager(),
+        WorkflowStateManager(InMemoryWorkflowStateStore()),
+        WorkflowStateManager(initial_workflow=None),
+    ):
+        assert workflows.get_state("fresh").active_workflow is None
+        assert workflows.commit_transition("fresh", decision()).transition_history == (
+            "None->discovery",
+        )
+
+
+def test_wr4_the_initial_state_is_not_stored_until_a_commit() -> None:
+    workflows = WorkflowStateManager(initial_workflow="discovery")
+    workflows.get_state("c")
+    assert not workflows.exists("c")
+    assert workflows.conversation_ids() == ()
+    workflows.commit_transition("c", decision("discovery"))
+    assert workflows.exists("c")
+
+
+def test_wr4_initial_workflow_is_keyword_only() -> None:
+    with pytest.raises(TypeError):
+        WorkflowStateManager(None, "discovery")  # type: ignore[misc]
+
+
+# =============================================================================
 # invalid transitions — structural only, never a routing judgement
 # =============================================================================
 @pytest.mark.parametrize("target", ["", "   ", "\t\n"])

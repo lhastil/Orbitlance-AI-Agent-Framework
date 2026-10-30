@@ -33,7 +33,7 @@ from runtime.loader import FilesystemProjectSource, ProjectLoader
 from runtime.models.audit import AuditEvent, AuditFilters
 from runtime.models.conversation import TurnRole
 from runtime.models.core_bundle import CoreBundle
-from runtime.models.prompt_bundle import PromptBundle
+from runtime.models.prompt_bundle import PromptBundle, PromptSlot
 from runtime.models.provider import (
     ProviderCapabilities,
     ProviderErrorType,
@@ -242,6 +242,7 @@ def build_engine(
     adapter: FixtureAdapter | None = None,
     observability=None,
     tools: ToolExecutor | None = None,
+    states: WorkflowStateManager | None = None,
 ) -> tuple[RuntimeEngine, FixtureAdapter, ProviderRegistry]:
     adapter = adapter if adapter is not None else FixtureAdapter()
     registry = ProviderRegistry().register(adapter)
@@ -253,7 +254,7 @@ def build_engine(
         guardrails=GuardrailEngine(core),
         providers=registry,
         router=WorkflowRouter(),
-        states=WorkflowStateManager(),
+        states=states if states is not None else WorkflowStateManager(),
         tools=tools if tools is not None else ToolExecutor(),
         audit=observability if observability is not None else AuditLogger(),
     )
@@ -1515,7 +1516,9 @@ def test_wr1_routing_is_wired_end_to_end_through_activate(
 
     engine.handle_request(request("Hello there", conversation_id="wr1-a"))
     assert states.get_state("wr1-a").active_workflow == "discovery"
-    assert states.get_state("wr1-a").transition_history == ("None->discovery",)
+    # WR-4: the conversation started in Discovery, so the first turn's commit
+    # is a stay-put entry rather than "None->discovery".
+    assert states.get_state("wr1-a").transition_history == ("discovery->discovery",)
 
 
 def test_wr1_an_unpublished_message_keeps_the_workflow_end_to_end(
@@ -1588,6 +1591,69 @@ def test_wr1_no_activatable_fixture_can_execute_a_transition_end_to_end(
     )
     assert degraded.degraded, "the unenabled workflow should degrade the turn"
     assert not degraded.blocked
+
+
+# =============================================================================
+# WR-4 — an activated conversation starts in the first-turn workflow
+# =============================================================================
+def test_wr4_the_first_prompt_carries_the_discovery_workflow_through_activate(
+    core: CoreBundle, audit_database: pathlib.Path
+) -> None:
+    """The state exists in Discovery before the first prompt is assembled."""
+    del audit_database
+    adapter = FixtureAdapter()
+    engine = activate(core, FIXTURES, FIXTURE_ID, ProviderRegistry().register(adapter))
+
+    response = engine.handle_request(request("Hello there", conversation_id="wr4-a"))
+
+    assert response == RuntimeResponse(text=ANSWER)
+    workflow_section = adapter.calls[0].section(PromptSlot.WORKFLOW)
+    assert workflow_section is not None
+    assert workflow_section.sources == ("core/workflows/discovery.md",)
+    history = workflow_states(engine).get_state("wr4-a").transition_history
+    assert not any(entry.startswith("None->") for entry in history)
+
+
+def test_wr4_a_first_turn_phrase_advances_out_of_discovery(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """Routing runs after the provider answers, from Discovery, on message one."""
+    context = _with_enabled(fixture_context, "consultation", "discovery", "recommendation")
+    engine, adapter, _ = build_engine(
+        core, context, states=WorkflowStateManager(initial_workflow="discovery")
+    )
+
+    response = engine.handle_request(
+        request(core_routing_phrase("discovery", "recommendation"), conversation_id="wr4-b")
+    )
+
+    assert response == RuntimeResponse(text=ANSWER)
+    # The prompt was assembled before routing, with Discovery still active.
+    assert adapter.calls[0].section(PromptSlot.WORKFLOW).sources == (
+        "core/workflows/discovery.md",
+    )
+    state = workflow_states(engine).get_state("wr4-b")
+    assert state.active_workflow == "recommendation"
+    assert state.transition_history == ("discovery->recommendation",)
+
+
+def test_wr4_a_first_turn_phrase_to_an_unenabled_workflow_is_refused_through_activate(
+    core: CoreBundle, audit_database: pathlib.Path
+) -> None:
+    """`fixture_clinic` does not enable Recommendation: WR-3 refuses the commit,
+    the conversation stays in Discovery and the turn is not degraded."""
+    del audit_database
+    engine = activate(core, FIXTURES, FIXTURE_ID, ProviderRegistry().register(FixtureAdapter()))
+    assert "recommendation" not in engine._context.config.enabled_workflows  # noqa: SLF001
+
+    response = engine.handle_request(
+        request(core_routing_phrase("discovery", "recommendation"), conversation_id="wr4-c")
+    )
+
+    assert response == RuntimeResponse(text=ANSWER)
+    state = workflow_states(engine).get_state("wr4-c")
+    assert state.active_workflow == "discovery"
+    assert state.transition_history == ()
 
 
 # =============================================================================
@@ -2430,3 +2496,115 @@ def test_re9_no_usable_answer_still_reaches_the_post_response_checkpoint(
     (seen,) = guardrails.seen
     assert seen.text == adapter_kwargs["text"]
     assert seen.error_type == adapter_kwargs.get("error_type")
+
+
+# =============================================================================
+# RE-10 — no workflow processing without a usable answer
+# =============================================================================
+class _CountingRouter(WorkflowRouter):
+    """The real Router, recording each call."""
+
+    __slots__ = ("calls",)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[str] = []
+
+    def route(self, current_state, latest_message, core_bundle):
+        self.calls.append(latest_message)
+        return super().route(current_state, latest_message, core_bundle)
+
+
+def _run_re10(core, context, adapter: FixtureAdapter, *, seed: bool = True):
+    """One turn on a conversation started as `activate()` starts one (WR-4).
+
+    With `seed`, the conversation already has a committed state and history, so
+    "unchanged" is checked against something rather than an empty state.
+    """
+    states = WorkflowStateManager(initial_workflow="discovery")
+    if seed:
+        states.commit_transition("re10", WorkflowTransitionDecision("discovery"))
+    before = states.get_state("re10")
+    router = _CountingRouter()
+    guardrails = _WatchingPostResponse(core)
+    registry = ProviderRegistry().register(adapter)
+    engine = RuntimeEngine(
+        resolved_context=context,
+        validation=validation_for(core, registry),
+        core=core,
+        sessions=SessionManager(),
+        guardrails=guardrails,
+        providers=registry,
+        router=router,
+        states=states,
+        tools=ToolExecutor(),
+        audit=AuditLogger(),
+    )
+    response = engine.handle_request(request(conversation_id="re10"))
+    return response, before, states.get_state("re10"), router, guardrails
+
+
+@pytest.mark.parametrize(
+    "adapter_kwargs",
+    [
+        {"text": "", "error_type": RE9_RETURNED_FAILURE},
+        {"text": "A routine examination is $80.", "error_type": RE9_RETURNED_FAILURE},
+        {"text": ""},
+    ],
+    ids=["returned_failure_empty", "returned_failure_with_text", "empty_answer"],
+)
+def test_re10_no_usable_answer_skips_routing_and_commits_nothing(
+    core: CoreBundle, fixture_context: ResolvedContext, adapter_kwargs: dict
+) -> None:
+    """The Router is not called and the state, history included, is unchanged —
+    no transition and no stay-put entry. The post-response checkpoint still saw
+    the response, and RE-9 still degrades the turn."""
+    response, before, after, router, guardrails = _run_re10(
+        core, fixture_context, FixtureAdapter(**adapter_kwargs)
+    )
+    assert router.calls == []
+    assert after == before
+    assert after.transition_history == ("discovery->discovery",)
+    assert len(guardrails.seen) == 1
+    assert response.degraded
+
+
+def test_re10_a_first_turn_without_a_usable_answer_leaves_discovery_with_no_history(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    """The ruling's WR-4 interaction: the initial state stands, nothing stored."""
+    _, _, after, router, _ = _run_re10(
+        core,
+        fixture_context,
+        FixtureAdapter(text="", error_type=RE9_RETURNED_FAILURE),
+        seed=False,
+    )
+    assert router.calls == []
+    assert after.active_workflow == "discovery"
+    assert after.transition_history == ()
+
+
+@pytest.mark.parametrize("text", [ANSWER, "   "], ids=["answer", "whitespace_only"])
+def test_re10_a_usable_answer_still_routes_and_records_the_stay_put(
+    core: CoreBundle, fixture_context: ResolvedContext, text: str
+) -> None:
+    """Whitespace-only text is usable under the unchanged predicate (RE-9-Q1
+    stays open), so it is routed like any other answer."""
+    _, before, after, router, _ = _run_re10(core, fixture_context, FixtureAdapter(text=text))
+    assert router.calls == [request().message]
+    assert after.transition_history == (
+        *before.transition_history,
+        "discovery->discovery",
+    )
+
+
+def test_re10_a_raised_provider_failure_still_stops_before_the_workflow_stage(
+    core: CoreBundle, fixture_context: ResolvedContext
+) -> None:
+    response, before, after, router, guardrails = _run_re10(
+        core, fixture_context, FixtureAdapter(fail_with=RuntimeError("down"))
+    )
+    assert response.degraded
+    assert guardrails.seen == []
+    assert router.calls == []
+    assert after == before
