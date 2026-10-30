@@ -8,6 +8,8 @@ behaviour the Phase 2 brief requires. Run with:
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from runtime.models.severity import Severity
@@ -397,6 +399,139 @@ def test_unregistered_provider_is_a_blocking_error_when_registry_present() -> No
     issue = next(i for i in result.issues if i.code == codes.CONF_PROVIDER_NOT_REGISTERED)
     assert issue.severity is Severity.ERROR
     assert not result.valid
+
+
+# --- PR-1: a declared Secondary must be registered too ----------------------
+SECONDARY_LINE = "- **Secondary (optional):** none"
+
+
+def _with_secondary(value: str | None) -> str:
+    """VALID_CONFIG with its Secondary line set to `value`, or removed if None."""
+    assert SECONDARY_LINE in VALID_CONFIG
+    if value is None:
+        return VALID_CONFIG.replace(SECONDARY_LINE + "\n", "")
+    return VALID_CONFIG.replace(SECONDARY_LINE, f"- **Secondary (optional):** {value}")
+
+
+def _registration_issues(config_text: str, registered: set[str]):
+    validator = Validator(provider_registry=FakeProviderRegistry(registered))
+    config = document("config.md", config_text)
+    result = validator.validate_project(make_project(config=config), make_core())
+    issues = [i for i in result.issues if i.code == codes.CONF_PROVIDER_NOT_REGISTERED]
+    return result, issues
+
+
+def test_pr1_an_unregistered_declared_secondary_is_a_blocking_error() -> None:
+    result, issues = _registration_issues(_with_secondary("zeta"), {"anthropic"})
+
+    (issue,) = issues
+    assert issue.severity is Severity.ERROR
+    assert issue.section == "LLM Provider"
+    assert issue.field_name == "Secondary"
+    assert "'zeta'" in issue.message
+    assert "secondary (failover)" in issue.message
+    assert "secondary (failover)" in issue.recommendation
+    assert not result.valid
+
+
+def test_pr1_a_registered_secondary_raises_no_issue() -> None:
+    result, issues = _registration_issues(
+        _with_secondary("openai"), {"anthropic", "openai"}
+    )
+    assert issues == []
+    assert result.valid, result.render()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,  # line absent
+        "",
+        "   ",
+        "none",
+        "None",
+        "NONE",
+        "_(none)_",
+        "_(placeholder)_",
+        "_(not yet selected)_",
+        "(placeholder)",
+        "(not yet chosen)",
+        "TBD",
+        "todo",
+        "<fill in>",
+        "xxx",
+    ],
+    ids=lambda v: "absent" if v is None else repr(v),
+)
+def test_pr1_an_undeclared_secondary_is_not_checked(value: str | None) -> None:
+    result, issues = _registration_issues(_with_secondary(value), {"anthropic"})
+    assert issues == []
+    assert result.valid, result.render()
+
+
+@pytest.mark.parametrize("value", ["(none)", "n/a"])
+def test_pr1_unapproved_none_spellings_are_declared_providers(value: str) -> None:
+    """Only `none` and `_(none)_` mean "no Secondary" (ruling PR-1)."""
+    _, issues = _registration_issues(_with_secondary(value), {"anthropic"})
+    (issue,) = issues
+    assert issue.field_name == "Secondary"
+
+
+def test_pr1_primary_and_secondary_are_reported_separately() -> None:
+    config = _with_secondary("zeta").replace("**Primary:** anthropic", "**Primary:** nope")
+    _, issues = _registration_issues(config, {"anthropic"})
+    assert sorted(i.field_name for i in issues) == ["Secondary", "nope"]
+
+
+def test_pr1_the_secondary_is_not_checked_when_the_primary_is_undeclared() -> None:
+    """The applicability gate is unchanged: CONF004 owns an undeclared Primary."""
+    config = _with_secondary("zeta").replace(
+        "**Primary:** anthropic", "**Primary:** _(placeholder)_"
+    )
+    validator = Validator(provider_registry=FakeProviderRegistry({"anthropic"}))
+    result = validator.validate_project(
+        make_project(config=document("config.md", config)), make_core()
+    )
+    assert codes.CONF_PROVIDER_NOT_DECLARED in {i.code for i in result.issues}
+    assert codes.CONF_PROVIDER_NOT_REGISTERED not in {i.code for i in result.issues}
+
+
+def test_pr1_without_a_registry_a_declared_secondary_is_a_coverage_gap() -> None:
+    result = Validator().validate_project(
+        make_project(config=document("config.md", _with_secondary("zeta"))), make_core()
+    )
+    assert result.coverage is ValidationCoverage.PARTIAL
+    assert not result.has_blocking_issues
+    assert any(
+        e.rule_id == "config.llm_provider_registered" for e in result.coverage_gaps
+    )
+
+
+@pytest.mark.parametrize(
+    ("root", "project_id", "secondary"),
+    [
+        ("tests/fixtures/projects", "fixture_clinic", "none"),
+        ("examples/minimal_agent/projects", "lantern_kitchen", "none"),
+        ("projects", "sunrise_dental_clinic", "_(none)_"),
+        ("projects", "orbitlance", "_(placeholder)_"),
+    ],
+)
+def test_pr1_repository_projects_raise_no_secondary_issue(
+    root: str, project_id: str, secondary: str
+) -> None:
+    """Every real configuration declares no Secondary, so none gains a finding."""
+    from runtime.core_loader import CoreLoader, FilesystemCoreSource
+    from runtime.loader import FilesystemProjectSource, ProjectLoader
+
+    repo = pathlib.Path(__file__).resolve().parents[2]
+    project = ProjectLoader(FilesystemProjectSource(repo / root)).load(project_id)
+    assert project.config_data.llm_provider.secondary == secondary
+    core = CoreLoader(FilesystemCoreSource(repo / "core")).get_core_bundle()
+    validator = Validator(
+        provider_registry=FakeProviderRegistry({"fixture_provider", "google"})
+    )
+    result = validator.validate_project(project, core)
+    assert not [i for i in result.issues if i.field_name == "Secondary"]
 
 
 def test_missing_core_bundle_yields_partial_coverage(validator: Validator) -> None:

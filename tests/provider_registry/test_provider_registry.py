@@ -690,22 +690,6 @@ def test_d_a_registered_provider_raises_no_validation_issue() -> None:
     assert list(ConfigProviderRegisteredRule().evaluate(ctx)) == []
 
 
-def test_d9_the_secondary_is_not_validated_and_the_gap_is_recorded() -> None:
-    """The committed rule reads `primary` only; §10.10 covers any routed-to
-    provider. Not fixed here — Module 13 is out of scope — so the contradiction
-    is pinned to the register rather than left to be rediscovered."""
-    from runtime.validation.rules import config as config_rules
-
-    source = pathlib.Path(config_rules.__file__).read_text(encoding="utf-8")
-    assert "llm_provider.secondary" not in source
-
-    register = (REPO_ROOT / "docs" / "known-issues-runtime.md").read_text(
-        encoding="utf-8"
-    )
-    assert "PR-1" in register
-    assert "secondary" in register.casefold()
-
-
 # =============================================================================
 # D-8(b) — ProviderRequest is deferred, and its ownership stays reserved
 # =============================================================================

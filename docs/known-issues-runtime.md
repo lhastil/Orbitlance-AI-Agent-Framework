@@ -877,7 +877,10 @@ consumers, and the concern the entry was holding open no longer exists.
 ### PR-1 — §10.10 and §13.10 disagree about which providers must be registered
 
 **Class: Architecture Issue** · Recorded under system-owner ruling D-9(d);
-Module 13 deliberately **not** modified.
+Module 13 deliberately **not** modified. **Ruled 2026-10-30 and implemented;
+not yet closed** — see the ruling and implementation note at the end of this
+entry. The description that follows is the state as recorded, retained for
+history.
 
 Two frozen clauses do not describe the same scope:
 
@@ -913,6 +916,63 @@ condition surfaces mid-conversation instead of at validation time.
 | Amend §13.10 to name both | Amends a frozen document |
 
 Pinned by `test_d9_the_secondary_is_not_validated_and_the_gap_is_recorded`.
+*(That test was replaced on 2026-10-30 by the behavioural tests listed below.)*
+
+#### Ruling, 2026-10-30 — PR-1: a declared Secondary must be registered at validation time
+
+**Accepted ruling. No freeze amendment.**
+
+1. **Interpretation.** §10.10 and §10.12(d) require every provider a project can
+   route to — the Primary and a declared Secondary — to be registered, checked
+   at Validation Layer time. §13.10's "Config's declared LLM provider is
+   registered" is read as covering the providers declared in the LLM Provider
+   section (KI-4: "primary, model, optional secondary"), not as an exhaustive
+   limit.
+2. **No Secondary declared.** A Secondary is undeclared when it is absent,
+   blank, a placeholder under the existing `PLACEHOLDER_MARKERS` rule, or exactly
+   `none` or `_(none)_` (trimmed, case-insensitive). Those two values are
+   defined beside `PLACEHOLDER_MARKERS`, not added to them. Any other value —
+   including `(none)` and `n/a` — is a declared provider id.
+3. **The check.** `ConfigProviderRegisteredRule` (`config.llm_provider_registered`)
+   also checks a declared Secondary. An unregistered one is an **ERROR** with
+   code **`CONF005`**, `section="LLM Provider"`, `field_name="Secondary"`, and a
+   message and recommendation naming it the secondary (failover) provider.
+4. **Unchanged:** the rule's applicability gate (inapplicable when the Primary is
+   absent or a placeholder — `CONF004`'s finding), its registry requirement and
+   coverage-gap behaviour, the Primary check, `CONF004`, `PLACEHOLDER_MARKERS`
+   and `_is_placeholder`, the Provider Registry and its runtime failover, and
+   `docs/runtime-specification.md`.
+5. **Out of scope:** the Secondary's model binding, capacity or budget checks
+   for the Secondary, a Secondary equal to the Primary, failover behaviour,
+   **PR-2** and PR-4.
+
+#### Implemented 2026-10-30 — not yet closed
+
+On `feature/runtime-packaging` on top of `ecdb1b1`; not yet committed.
+
+* **Code.** `NO_SECONDARY_PROVIDER_VALUES` in `runtime/validation/framework_spec.py`;
+  `_declared_secondary` and the extended `ConfigProviderRegisteredRule` in
+  `runtime/validation/rules/config.py`. The Primary issue is reported exactly
+  as before, and the two are reported separately when both are unregistered.
+* **Tests.** In `tests/validation/test_validator.py`, twenty-six cases: an
+  unregistered declared Secondary is one `CONF005` ERROR naming `Secondary` and
+  the result is invalid; a registered Secondary raises nothing; fifteen
+  undeclared forms (absent, blank, whitespace, `none` in three cases,
+  `_(none)_`, and every `PLACEHOLDER_MARKERS` form) raise nothing; `(none)` and
+  `n/a` are checked as declared ids; Primary and Secondary are reported
+  separately; an undeclared Primary still yields `CONF004` and no `CONF005`;
+  without a registry the rule remains a coverage gap; and `fixture_clinic`,
+  `lantern_kitchen`, `sunrise_dental_clinic` and `orbitlance` raise no Secondary
+  issue. Four of them fail against the previous rule. The structural test
+  `test_d9_the_secondary_is_not_validated_and_the_gap_is_recorded` in
+  `tests/provider_registry/test_provider_registry.py` was removed; the existing
+  Primary `CONF005` and coverage-gap tests are unchanged.
+* **Compatibility.** The four repository projects validate with the same result
+  and issue codes as before the change.
+* **Verification.** Offline, 2026-10-30: full suite **1197 passed, 16 skipped**
+  (the 16 are the opt-in live Gemini tests); `ruff check` passed.
+
+**PR-1 may close** once this change is reviewed and committed.
 
 ---
 

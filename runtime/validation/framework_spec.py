@@ -181,6 +181,14 @@ PLACEHOLDER_MARKERS: Final[tuple[str, ...]] = (
     "xxx",
 )
 
+# --- Secondary provider ----------------------------------------------------
+# Source: core/templates/config.md — "Secondary (optional)"; ruling PR-1 in
+# docs/known-issues-runtime.md. Values that deliberately declare no Secondary.
+# Matched exactly (trimmed, case-insensitive), not as substrings, and kept apart
+# from PLACEHOLDER_MARKERS: "none" is an answer, not "not filled in yet", and
+# treating it as a placeholder would change how a Primary of "none" is judged.
+NO_SECONDARY_PROVIDER_VALUES: Final[frozenset[str]] = frozenset({"none", "_(none)_"})
+
 # --- Operating Constraints -------------------------------------------------
 # Source: docs/project-configuration.md — constraints are ADDITIVE ONLY and may
 # never relax, weaken or override core/guardrails/. These phrases indicate an

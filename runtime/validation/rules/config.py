@@ -55,6 +55,20 @@ def _declared_provider(context: ProjectRuleContext) -> str | None:
     return None if _is_placeholder(primary) else primary
 
 
+def _declared_secondary(context: ProjectRuleContext) -> str | None:
+    """The declared Secondary provider, or None if none is declared (PR-1).
+
+    Undeclared: absent, blank, a placeholder, or exactly `none` / `_(none)_`.
+    """
+    secondary = context.project.config_data.llm_provider.secondary
+    if _is_placeholder(secondary):
+        return None
+    assert secondary is not None  # _is_placeholder treats None as a placeholder
+    if secondary.strip().casefold() in spec.NO_SECONDARY_PROVIDER_VALUES:
+        return None
+    return secondary
+
+
 def _workflow_stem(name: str) -> str:
     """A workflow label or Core file name in the Resolver's comparison form.
 
@@ -354,10 +368,18 @@ class ConfigProviderRegisteredRule(ProjectRule):
     When no registry is supplied this rule is skipped and recorded as a
     coverage gap, so the result reports PARTIAL rather than claiming the
     provider was checked. It never downgrades a real failure to a warning.
+
+    **PR-1:** §10.10 forbids routing to any unregistered provider, and the
+    Provider Registry fails over to the Secondary (§10.9), so a declared
+    Secondary is checked here too. It is checked only when the Primary is
+    declared; an undeclared Primary is `ConfigProviderDeclaredRule`'s finding.
     """
 
     rule_id = "config.llm_provider_registered"
-    description = "The declared LLM provider is registered in the Provider Registry."
+    description = (
+        "The declared LLM providers (Primary and any Secondary) are registered "
+        "in the Provider Registry."
+    )
     required_collaborators = frozenset({Collaborator.PROVIDER_REGISTRY})
 
     def is_applicable(self, context: ProjectRuleContext) -> bool:
@@ -374,23 +396,44 @@ class ConfigProviderRegisteredRule(ProjectRule):
         primary = _declared_provider(context)
         assert primary is not None  # guaranteed by is_applicable
 
-        if registry.is_registered(primary):
+        known = ", ".join(sorted(registry.registered_providers())) or "none"
+
+        if not registry.is_registered(primary):
+            yield self.issue(
+                code=codes.CONF_PROVIDER_NOT_REGISTERED,
+                severity=Severity.ERROR,
+                message=(
+                    f"Declared LLM provider {primary!r} is not registered in the "
+                    "Provider Registry."
+                ),
+                file=context.project.config.relative_path,
+                section="LLM Provider",
+                field_name=primary,
+                recommendation=(
+                    "Register the provider adapter, or change config.md to a "
+                    f"registered provider. Known providers: {known}"
+                ),
+            )
+
+        secondary = _declared_secondary(context)
+        if secondary is None or registry.is_registered(secondary):
             return
 
-        known = ", ".join(sorted(registry.registered_providers())) or "none"
         yield self.issue(
             code=codes.CONF_PROVIDER_NOT_REGISTERED,
             severity=Severity.ERROR,
             message=(
-                f"Declared LLM provider {primary!r} is not registered in the "
-                "Provider Registry."
+                f"Declared secondary (failover) LLM provider {secondary!r} is not "
+                "registered in the Provider Registry. A failover to it would fail "
+                "mid-conversation (specification 10.10)."
             ),
             file=context.project.config.relative_path,
             section="LLM Provider",
-            field_name=primary,
+            field_name="Secondary",
             recommendation=(
-                "Register the provider adapter, or change config.md to a "
-                f"registered provider. Known providers: {known}"
+                "Register the secondary (failover) provider adapter, change "
+                "Secondary in config.md to a registered provider, or set it to "
+                f"'none' if the project has no failover. Known providers: {known}"
             ),
         )
 
