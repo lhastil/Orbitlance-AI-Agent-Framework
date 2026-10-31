@@ -757,6 +757,97 @@ def test_an_empty_candidate_is_an_empty_string_not_a_crash() -> None:
     assert adapter.generate(a_bundle(), ()).text == ""
 
 
+# --- PI-1 (ruling 2026-10-31, Policy A): no usable text is an empty success ---
+def _generate_from(response: types.GenerateContentResponse) -> ProviderResponse:
+    return an_adapter(response=response).generate(a_bundle(), ())
+
+
+def _assert_ruled_empty_success(response: ProviderResponse) -> None:
+    """Empty text, no error type, nothing derived kept."""
+    assert isinstance(response, ProviderResponse)
+    assert response.text == ""
+    assert response.error_type is None
+    assert not response.failed
+    assert dict(response.raw_payload) == {}
+
+
+def test_pi1_an_empty_text_part_is_an_empty_success() -> None:
+    response = _generate_from(
+        types.GenerateContentResponse(
+            candidates=[
+                types.Candidate(
+                    content=types.Content(role="model", parts=[types.Part(text="")]),
+                    finish_reason=types.FinishReason.STOP,
+                )
+            ]
+        )
+    )
+    _assert_ruled_empty_success(response)
+
+
+def test_pi1_a_prompt_level_block_is_an_empty_success_not_an_error() -> None:
+    response = _generate_from(
+        types.GenerateContentResponse(
+            prompt_feedback=types.GenerateContentResponsePromptFeedback(
+                block_reason=types.BlockedReason.SAFETY,
+                block_reason_message="vendor block detail",
+            )
+        )
+    )
+    _assert_ruled_empty_success(response)
+    assert "vendor block detail" not in repr(response)
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        types.Candidate(content=None, finish_reason=types.FinishReason.SAFETY),
+        types.Candidate(
+            content=types.Content(role="model", parts=[]),
+            finish_reason=types.FinishReason.SAFETY,
+        ),
+        types.Candidate(
+            content=types.Content(role="model", parts=[]),
+            finish_reason=types.FinishReason.RECITATION,
+            finish_message="vendor finish detail",
+        ),
+        types.Candidate(content=types.Content(role="model", parts=[])),
+    ],
+    ids=["no_content_safety", "empty_parts_safety", "empty_parts_recitation", "empty_parts"],
+)
+def test_pi1_a_candidate_without_usable_text_is_an_empty_success(
+    candidate: types.Candidate,
+) -> None:
+    response = _generate_from(types.GenerateContentResponse(candidates=[candidate]))
+    _assert_ruled_empty_success(response)
+    assert "vendor finish detail" not in repr(response)
+
+
+@pytest.mark.parametrize(
+    "part",
+    [
+        types.Part(function_call=types.FunctionCall(name="lookup", args={})),
+        types.Part(text="internal reasoning", thought=True),
+    ],
+    ids=["function_call_only", "thought_only"],
+)
+def test_pi1_a_reply_with_only_non_text_parts_is_an_empty_success(
+    part: types.Part,
+) -> None:
+    response = _generate_from(
+        types.GenerateContentResponse(
+            candidates=[
+                types.Candidate(
+                    content=types.Content(role="model", parts=[part]),
+                    finish_reason=types.FinishReason.STOP,
+                )
+            ]
+        )
+    )
+    _assert_ruled_empty_success(response)
+    assert "internal reasoning" not in repr(response)
+
+
 # =============================================================================
 # streaming and tool calling (§13, §14) — capability reporting only
 # =============================================================================

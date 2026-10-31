@@ -12,8 +12,8 @@ signature or requires rewriting a shipped module. Confidence in
 `ProjectContext` as a permanent dependency is **≥95%** — see the assessment
 below the Task 2 heading.
 
-**Thirteen open Architecture Issues: TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
-RE-3, RE-5, AUDIT-6, WR-2, OB-4, PR-4, PI-1**, recorded during
+**Twelve open Architecture Issues: TE-2, TE-3, TE-5, TE-6, TE-7, RE-1,
+RE-3, RE-5, AUDIT-6, WR-2, OB-4, PR-4**, recorded during
 Modules 10, 11, 14 and 15, the §14 post-implementation audit, the Step 4 roadmap
 audit of 2026-09-05, the WR-1 implementation audit of the same day, the RE-5
 customer-facing wording audit of 2026-10-08, and the RE-9 provider-outcome audit
@@ -34,6 +34,9 @@ usable answer) were registered and ruled on 2026-10-30, and **closed on
 workflow-transition question PI-2's ruling left open in its clause 6.
 **PR-1** (secondary provider registration) was ruled on 2026-10-30 and **closed
 on 2026-10-30** once implemented in `9a24aa5`; PR-2 stays open.
+**PI-1** (Gemini missing or filtered replies) was ruled on 2026-10-31 and
+**closed on 2026-10-31** once offline tests pinned the ruled behaviour; PR-4
+stays open.
 **WR-1 and GE-1 are not new defects** — both were disclosed in source and in
 README from their own module milestones, and both are pinned by tests; what they
 lacked until 2026-09-05 was a register identifier, an owner and a closure
@@ -99,7 +102,7 @@ one class.
 | **R3-3** | **Missing Branding resolves to an empty overlay** | **Documentation / Reporting** |
 | **R3-4** | **`ResolvedContext` has no consumer yet** | **Additive Extension** |
 | **PA-3** | **`06_lead_qualification.md` is not assembled; its behaviour is delivered distributively** | **Documentation / Reporting** (was: Architecture Issue) |
-| **PI-1** | **The Gemini adapter cannot tell a vendor-side missing or filtered reply from a genuinely empty answer** | **Architecture Issue** — design ruled, not implemented |
+| **PI-1** | **The Gemini adapter cannot tell a vendor-side missing or filtered reply from a genuinely empty answer** | **Closed** — no usable text stays an empty successful response; pinned by offline tests |
 | **PI-2** | **No rule says when a provider failure is raised and when it is returned as `ProviderResponse.error_type`** | **Closed** — failures are raised; the conformance suite rejects a returned `error_type` |
 | **PR-1** | **§10.10 and §13.10 disagree about whether the secondary provider must be registered** | **Closed** — a declared Secondary is checked for registration at validation time (`CONF005`) |
 | **PR-2** | **The declared Model is required at routing time but not at validation** | **Documentation / Reporting** |
@@ -3418,9 +3421,10 @@ is not decided, and no failover policy is decided for either case.
 
 ### PI-1 — The Gemini adapter cannot tell a vendor-side missing or filtered reply from a genuinely empty answer
 
-**Class: Architecture Issue** · Registered 2026-10-08 (RE-9 audit). **Open.**
-**Design ruled 2026-10-31 — not implemented. Not closed.** See the ruling after
-the description, which is retained as registered.
+**Class: Architecture Issue** · Registered 2026-10-08 (RE-9 audit).
+✅ **CLOSED 2026-10-31** — design ruled 2026-10-31 (Policy A); see the
+resolution note after the ruling. The description and ruling that follow are
+retained as recorded.
 A Provider Interface (Module 9) adapter-normalization question under §9.9 and the
 conformance suite — **not** to be solved as part of RE-9.
 
@@ -3506,8 +3510,43 @@ a reply with only non-text parts (the no-candidates case is already pinned by
 the comment in `_normalise_response` cited to this ruling. No change to
 behaviour is required.
 
-**PI-1 may close** when those tests exist, are reviewed, and the full offline
-suite passes.
+*As recorded before closure:* **PI-1 may close** when those tests exist, are
+reviewed, and the full offline suite passes. *(Historical closure condition, met
+on 2026-10-31 — see below.)*
+
+#### ✅ **RESOLVED 2026-10-31 — PI-1 closed: ruled behaviour pinned by tests**
+
+**No production code changed.** Policy A keeps the adapter's existing
+behaviour; PI-1 is closed because that behaviour is now pinned by tests, not
+because the implementation changed. The ruling above is unchanged.
+
+* **Tests.** Added to `tests/provider/adapters/test_gemini_offline.py`, beside
+  the existing response-normalisation tests; reviewed, and not yet committed at
+  the time of this record. Using the installed SDK's own response models and the
+  module's fake client, eight cases assert `text == ""`, `error_type is None`,
+  not `failed`, an empty `raw_payload`, and that supplied vendor messages or
+  thought text do not appear in the returned `ProviderResponse`, for:
+  * an empty text part;
+  * a prompt-level block (`prompt_feedback.block_reason`);
+  * a single candidate whose content or parts are empty, including
+    candidate-level blocking or filtering (`finish_reason` `SAFETY` or
+    `RECITATION`);
+  * a reply containing only non-text parts (a function call; a thought part).
+
+  The no-candidates case was already covered by
+  `test_an_empty_candidate_is_an_empty_string_not_a_crash`. The tests assert
+  only the adapter's contract; they import nothing from the Runtime Engine.
+* **Verification.** Offline, 2026-10-31: the eight PI-1 cases passed; the Gemini
+  offline module **111 passed**; the full suite **1205 passed, 16 skipped** (the
+  16 are the opt-in live Gemini tests); `ruff check` passed.
+* **Limits — recorded, not closed over.** Live Gemini API behaviour is not
+  verified; parity with google-genai 2.20.0 is not verified (the evidence is
+  from 2.29.0); and the tests establish nothing about logging, exception chains
+  or SDK warnings. The coverage is for the Gemini adapter only, not for every
+  provider.
+
+**Unchanged and not resolved by this closure:** PR-4, PI-2, RE-9-Q1, failover
+policy and `FAILOVER_ERROR_TYPES`, and SDK-version policy.
 
 ---
 
