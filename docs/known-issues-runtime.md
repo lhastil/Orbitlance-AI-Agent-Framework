@@ -99,7 +99,7 @@ one class.
 | **R3-3** | **Missing Branding resolves to an empty overlay** | **Documentation / Reporting** |
 | **R3-4** | **`ResolvedContext` has no consumer yet** | **Additive Extension** |
 | **PA-3** | **`06_lead_qualification.md` is not assembled; its behaviour is delivered distributively** | **Documentation / Reporting** (was: Architecture Issue) |
-| **PI-1** | **The Gemini adapter cannot tell a vendor-side missing or filtered reply from a genuinely empty answer** | **Architecture Issue** |
+| **PI-1** | **The Gemini adapter cannot tell a vendor-side missing or filtered reply from a genuinely empty answer** | **Architecture Issue** — design ruled, not implemented |
 | **PI-2** | **No rule says when a provider failure is raised and when it is returned as `ProviderResponse.error_type`** | **Closed** — failures are raised; the conformance suite rejects a returned `error_type` |
 | **PR-1** | **§10.10 and §13.10 disagree about whether the secondary provider must be registered** | **Closed** — a declared Secondary is checked for registration at validation time (`CONF005`) |
 | **PR-2** | **The declared Model is required at routing time but not at validation** | **Documentation / Reporting** |
@@ -3419,6 +3419,8 @@ is not decided, and no failover policy is decided for either case.
 ### PI-1 — The Gemini adapter cannot tell a vendor-side missing or filtered reply from a genuinely empty answer
 
 **Class: Architecture Issue** · Registered 2026-10-08 (RE-9 audit). **Open.**
+**Design ruled 2026-10-31 — not implemented. Not closed.** See the ruling after
+the description, which is retained as registered.
 A Provider Interface (Module 9) adapter-normalization question under §9.9 and the
 conformance suite — **not** to be solved as part of RE-9.
 
@@ -3434,6 +3436,78 @@ The architecture does not say whether such a case should be normalised to a
 whether the conformance suite should require a particular answer. Under RE-9 the
 runtime outcome is degraded in every one of those representations. No fix is
 implemented and none is proposed here.
+
+#### Ruling, 2026-10-31 — PI-1: missing or filtered Gemini replies stay empty successful responses
+
+**Accepted architectural ruling (Policy A). No freeze amendment or version bump
+is required.** Based on an offline evidence investigation against google-genai
+2.29.0 (the version installed for that investigation; the project declares
+`google-genai>=1.0` and has no lockfile, and 2.20.0 parity was not verified). No
+live API behaviour was observed.
+
+1. **Empty successful response.** A Gemini response with no usable text is
+   normalised to `ProviderResponse(text="", error_type=None)`, as today. This
+   covers an empty text part, no candidates, a prompt-level block
+   (`prompt_feedback.block_reason`), a candidate-level block or filter that
+   leaves no text (`finish_reason`), and a reply containing only non-text parts.
+2. **Not a `ProviderError`.** These outcomes are not converted into a raised
+   `ProviderError`. No `ProviderErrorType` is added. An unreadable response
+   still raises, as it does today.
+3. **Semantic classification.** For PI-1, a Gemini content block is a provider
+   **outcome**, not an operational provider failure under PI-2 clause 1. This
+   does not make content blocks unimportant: it means they are not turned into
+   infrastructure failures or made eligible for failover without a separate,
+   explicit policy decision. The classification is specific to the Gemini
+   adapter and is not a policy for every provider.
+4. **Failover unchanged.** `FAILOVER_ERROR_TYPES` and secondary-provider
+   failover are unchanged.
+5. **RE-9 and RE-10 unchanged.** `_no_usable_answer(...)` classifies the empty
+   response as no usable answer; the turn is degraded as RE-9 rules and
+   workflow processing is skipped as RE-10 rules.
+6. **`raw_payload` unchanged.** PI-1 adds no derived reason codes to
+   `ProviderResponse.raw_payload`. Within the current runtime a value placed
+   there would not outlive the turn: nothing reads it after the provider stage,
+   and `TurnState` is discarded when `handle_request` returns.
+7. **Diagnostics and audit are separate decisions.** Exposing vendor reason
+   codes to runtime diagnostics, or persisting them in audit events, is outside
+   PI-1.
+
+**Future reason-code safety constraint — recorded, not implemented.** Any later
+proposal that retains Gemini reason codes must meet these conditions:
+
+* only known, explicitly allowlisted `BlockedReason` and `FinishReason` member
+  values may be retained as machine-readable codes;
+* an unknown enum value is never stored verbatim — the SDK's case-insensitive
+  enum turns an unrecognised value into an enum instance carrying the raw
+  string, which may be arbitrary, unbounded text — and may instead be mapped to a
+  fixed marker such as `UNRECOGNIZED`;
+* `block_reason_message`, `finish_message`, `safety_ratings`, prompt text,
+  response text and any other vendor-provided string are never retained as
+  diagnostic reason codes.
+
+**Not decided by PI-1:** whether a content block should trigger a
+secondary-provider attempt (**PR-4**); whether non-empty text with `RECITATION`,
+`MAX_TOKENS` or another non-normal finish reason is delivered or rejected;
+whitespace-only text (**RE-9-Q1**); audit payload changes or reason-code
+persistence (**OB-4** / Observability); public runtime diagnostic interfaces;
+streaming and tool execution; SDK version pinning or dependency changes.
+
+**Unchanged:** PI-2, PR-4, RE-9, RE-10, `ProviderResponse`, `ProviderErrorType`,
+the Provider Registry, the Runtime Engine, the conformance suite and
+`docs/runtime-specification.md`.
+
+**Implementation follow-ups — not authorized by this record:** offline tests in
+`tests/provider/adapters/test_gemini_offline.py` pinning the ruled outcome —
+`text == ""`, `error_type is None`, no exception, empty `raw_payload` — for an
+empty text part; a prompt-level block; a single candidate whose content or parts
+are empty (including a candidate-level block or filter that leaves no text); and
+a reply with only non-text parts (the no-candidates case is already pinned by
+`test_an_empty_candidate_is_an_empty_string_not_a_crash`); and, optionally,
+the comment in `_normalise_response` cited to this ruling. No change to
+behaviour is required.
+
+**PI-1 may close** when those tests exist, are reviewed, and the full offline
+suite passes.
 
 ---
 
